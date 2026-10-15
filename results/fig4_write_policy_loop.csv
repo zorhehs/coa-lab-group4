@@ -1,0 +1,5 @@
+series,param,value,label,hit_ratio,miss_ratio,amat,compulsory,capacity,conflict,victim_hits,writebacks,mem_reads,mem_writes,traffic_kib
+WA,write_policy,WB,WB,0.9583,0.0417,5.1667,32,0,0,0,0,32,0,0.5000
+WA,write_policy,WT,WT,0.9583,0.0417,5.1667,32,0,0,0,0,32,188,1.2344
+NWA,write_policy,WB,WB,0.9362,0.0638,7.3802,49,0,0,0,0,32,17,0.5664
+NWA,write_policy,WT,WT,0.9362,0.0638,7.3802,49,0,0,0,0,32,188,1.2344

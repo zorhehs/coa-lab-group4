@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CACHE-SIM · P07 Configurable Cache Memory Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23141518'/%3E%3Crect x='2' y='4' width='12' height='3' fill='%23F5B942'/%3E%3Crect x='2' y='9' width='7' height='3' fill='%2358D68D'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <span class="brand-name">CACHE‑SIM</span>
+    <span class="brand-sub">P07 · CONFIGURABLE CACHE MEMORY SIMULATOR</span>
+  </div>
+  <div class="readout-strip" id="readoutStrip"></div>
+  <div class="transport">
+    <button class="tbtn" id="btnFirst" title="Reset to start (Home)">⏮</button>
+    <button class="tbtn" id="btnBack" title="Step back (←)">◀</button>
+    <button class="tbtn tbtn-play" id="btnPlay" title="Play / pause (Space)">▶</button>
+    <button class="tbtn" id="btnStep" title="Step forward (→)">▶▏</button>
+    <button class="tbtn" id="btnLast" title="Run to end (End)">⏭</button>
+    <div class="speed">
+      <span class="lbl">RATE</span>
+      <input type="range" id="speed" min="1" max="40" value="8">
+      <span class="lcd lcd-xs" id="speedOut">4/s</span>
+    </div>
+    <div class="status">
+      <span class="led" id="statusLed"></span>
+      <span class="status-txt" id="statusTxt">IDLE</span>
+    </div>
+  </div>
+</header>
+
+<main class="deck">
+
+  <!-- ============================ LEFT RACK ============================ -->
+  <aside class="rack rack-left">
+
+    <section class="module" id="modConfig">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">CONFIGURATION</span><span class="mod-sub">cache geometry &amp; policies</span></div>
+      <div class="mod-body" id="configBody"></div>
+      <div class="cfg-error" id="configError" hidden></div>
+    </section>
+
+    <section class="module" id="modGeometry">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">GEOMETRY</span><span class="mod-sub">derived</span></div>
+      <div class="mod-body">
+        <div class="geo-grid" id="geoGrid"></div>
+        <div class="bit-ruler" id="bitRuler"></div>
+        <div class="cli-line">
+          <span class="lbl">CLI</span>
+          <code id="cliEquiv"></code>
+          <button class="mini" id="btnCopyCli" title="Copy command">COPY</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="module" id="modTrace">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">TRACE SOURCE</span><span class="mod-sub" id="traceStatus">none loaded</span></div>
+      <div class="mod-body">
+        <div class="tabs" id="traceTabs">
+          <button class="tab active" data-tab="preset">PRESET</button>
+          <button class="tab" data-tab="generate">GENERATE</button>
+          <button class="tab" data-tab="paste">PASTE / FILE</button>
+        </div>
+        <div class="tab-pane" data-pane="preset">
+          <div class="preset-list" id="presetList"></div>
+        </div>
+        <div class="tab-pane" data-pane="generate" hidden>
+          <div class="seg" id="genKinds"></div>
+          <div class="gen-form" id="genForm"></div>
+          <div class="row-right"><button class="btn btn-amber" id="btnGenerate">GENERATE &amp; LOAD</button></div>
+        </div>
+        <div class="tab-pane" data-pane="paste" hidden>
+          <textarea id="pasteArea" spellcheck="false" placeholder="# one access per line&#10;R 0x1A3C&#10;W 0x1A40&#10;0 1A44      (dinero)&#10;L 04010000,4 (valgrind lackey)"></textarea>
+          <div class="row-between">
+            <label class="btn btn-ghost file-btn">OPEN FILE <input type="file" id="fileInput" accept=".trace,.txt,.din,.out,.csv,*/*"></label>
+            <button class="btn btn-amber" id="btnLoadPaste">LOAD</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- ============================ CENTER RACK ============================ -->
+  <section class="rack rack-center">
+
+    <section class="module" id="modDecode">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head">
+        <span class="mod-title">ADDRESS DECODE</span>
+        <span class="mod-sub">tag · index · offset</span>
+        <span class="mod-right"><span class="lbl">STEP</span> <span class="lcd lcd-sm" id="stepOut">0 / 0</span></span>
+      </div>
+      <div class="mod-body">
+        <div class="decode-top">
+          <div class="lcd lcd-lg" id="addrOut">— — — —</div>
+          <div class="op-badge" id="opBadge">·</div>
+          <div class="result-badge" id="resultBadge"></div>
+        </div>
+        <div class="bits" id="bitsOut"></div>
+        <div class="fields" id="fieldsOut"></div>
+        <div class="probe">
+          <span class="lbl">PROBE</span>
+          <input type="text" id="probeIn" class="lcd-input" placeholder="type an address, e.g. 0x1A3C or 6716" spellcheck="false">
+          <button class="btn btn-ghost" id="btnInjectR" title="Append a read of this address to the trace">INJECT R</button>
+          <button class="btn btn-ghost" id="btnInjectW" title="Append a write of this address to the trace">INJECT W</button>
+        </div>
+        <div class="note" id="noteOut"></div>
+      </div>
+    </section>
+
+    <section class="module" id="modArray">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head">
+        <span class="mod-title">CACHE ARRAY</span>
+        <span class="mod-sub" id="arraySub"></span>
+        <span class="mod-right legend">
+          <span><i class="led on-green"></i>HIT</span>
+          <span><i class="led on-red"></i>MISS</span>
+          <span><i class="led on-blue"></i>VICTIM</span>
+          <span><i class="dot dirty"></i>DIRTY</span>
+          <span><i class="dot age"></i>LRU AGE</span>
+        </span>
+      </div>
+      <div class="mod-body array-body">
+        <div class="heat" id="heatStrip" hidden></div>
+        <div class="array" id="arrayOut"></div>
+        <div class="victim" id="victimOut" hidden></div>
+      </div>
+    </section>
+
+    <section class="module" id="modExp">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head">
+        <span class="mod-title">EXPERIMENTS</span>
+        <span class="mod-sub">parameter sweeps on the loaded trace</span>
+        <span class="mod-right"><button class="mini" id="btnExportCsv" disabled>EXPORT CSV</button></span>
+      </div>
+      <div class="mod-body">
+        <div class="exp-controls">
+          <div class="ctl"><span class="lbl">X AXIS</span><div class="seg" id="sweepParam"></div></div>
+          <div class="ctl"><span class="lbl">SERIES</span><div class="seg" id="sweepSeries"></div></div>
+          <div class="ctl"><span class="lbl">METRIC</span><div class="seg" id="sweepMetric"></div></div>
+          <div class="ctl ctl-btns">
+            <button class="btn btn-amber" id="btnSweep">RUN SWEEP</button>
+            <button class="btn btn-ghost" id="btnCompareTraces" title="Run the current configuration on every preset trace">COMPARE TRACES</button>
+          </div>
+        </div>
+        <div class="chart" id="chartOut"><div class="chart-empty">No sweep yet. Choose an axis and press RUN SWEEP.</div></div>
+        <div class="exp-table" id="sweepTable"></div>
+      </div>
+    </section>
+
+  </section>
+
+  <!-- ============================ RIGHT RACK ============================ -->
+  <aside class="rack rack-right">
+
+    <section class="module" id="modCounters">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">COUNTERS</span><span class="mod-sub" id="countersSub">at current step</span></div>
+      <div class="mod-body">
+        <div class="big-readouts">
+          <div class="big"><span class="lbl">HIT RATIO</span><span class="lcd lcd-xl green" id="hitRatio">0.000</span></div>
+          <div class="big"><span class="lbl">MISS RATIO</span><span class="lcd lcd-xl red" id="missRatio">0.000</span></div>
+          <div class="big"><span class="lbl">AMAT</span><span class="lcd lcd-xl" id="amat">0.00</span><span class="unit">cyc</span></div>
+        </div>
+        <div class="miss-bar" id="missBar"><span class="comp"></span><span class="cap"></span><span class="conf"></span></div>
+        <div class="miss-bar-legend"><span><i class="sw comp"></i>COMPULSORY</span><span><i class="sw cap"></i>CAPACITY</span><span><i class="sw conf"></i>CONFLICT</span></div>
+        <div class="counter-grid" id="counterGrid"></div>
+      </div>
+    </section>
+
+    <section class="module module-fill" id="modLog">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">ACCESS LOG</span><span class="mod-sub" id="logSub"></span></div>
+      <div class="log-head"><span>#</span><span>OP</span><span>ADDRESS</span><span>SET</span><span>WAY</span><span>RESULT</span></div>
+      <div class="log" id="logOut"></div>
+    </section>
+
+  </aside>
+</main>
+
+<footer class="foot">
+  <span>NUST BALOCHISTAN CAMPUS · DEPARTMENT OF COMPUTER SCIENCE · COMPUTER ARCHITECTURE &amp; ORGANIZATION LAB</span>
+  <span>GROUP 04 · ALIYAN ZULFIQAR · SHEHROZ RIAZ</span>
+  <span id="footVersion"></span>
+</footer>
+
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

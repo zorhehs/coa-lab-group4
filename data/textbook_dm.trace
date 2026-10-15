@@ -1,0 +1,10 @@
+# Textbook (Hennessy & Patterson) direct-mapped example: 8 one-word blocks, word addresses 22 26 22 26 16 3 16 18
+# run with: --size 32 --block 4 --assoc 1   -> expected miss miss hit hit miss miss hit miss
+R 88
+R 104
+R 88
+R 104
+R 64
+R 12
+R 64
+R 72

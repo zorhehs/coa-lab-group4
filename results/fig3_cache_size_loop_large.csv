@@ -1,0 +1,7 @@
+series,param,value,label,hit_ratio,miss_ratio,amat,compulsory,capacity,conflict,victim_hits,writebacks,mem_reads,mem_writes,traffic_kib
+,cache_size,256,256 B,0.7500,0.2500,26.0000,128,256,0,0,228,384,228,9.5625
+,cache_size,512,512 B,0.7500,0.2500,26.0000,128,256,0,0,218,384,218,9.4062
+,cache_size,1024,1 KiB,0.7500,0.2500,26.0000,128,256,0,0,196,384,196,9.0625
+,cache_size,2048,2 KiB,0.9167,0.0833,9.3333,128,0,0,0,0,128,0,2.0000
+,cache_size,4096,4 KiB,0.9167,0.0833,9.3333,128,0,0,0,0,128,0,2.0000
+,cache_size,8192,8 KiB,0.9167,0.0833,9.3333,128,0,0,0,0,128,0,2.0000

@@ -1,0 +1,846 @@
+/* ==================================================================
+   CACHE-SIM front end.  Talks to the Python simulator over /api/*.
+   The server runs the whole trace once and returns one event per
+   access (with the touched set before/after); stepping, playback and
+   the cache-array animation are then done entirely in the browser.
+   ================================================================== */
+'use strict';
+
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hex = (n, w) => '0x' + n.toString(16).toUpperCase().padStart(w || 0, '0');
+const fmtBytes = (b) => (b >= 1024 && b % 1024 === 0) ? (b / 1024) + ' KiB' : b + ' B';
+
+const state = {
+  meta: null,
+  config: {},
+  traceText: '',
+  traceName: '',
+  traceCount: 0,
+  sim: null,            // last /api/simulate response
+  step: 0,              // 0 .. maxStep
+  playing: false,
+  timer: null,
+  grid: [],             // [set][way] -> {valid, tag, dirty, age}
+  heat: [],             // last outcome per set ('h' | 'm' | 'v')
+  probe: null,          // /api/decode result for the probe input
+  sweep: null,          // last sweep rows
+  sweepParam: 'associativity',
+  sweepSeries: '',
+  sweepMetric: 'hit_ratio',
+  presetCache: {},
+};
+
+/* ------------------------------------------------------------------ */
+/*  API                                                                */
+/* ------------------------------------------------------------------ */
+async function api(path, body) {
+  const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opts);
+  let data = null;
+  try { data = await r.json(); } catch (e) { throw new Error('bad response from server'); }
+  if (!r.ok || data.error) throw new Error(data.error || ('HTTP ' + r.status));
+  return data;
+}
+
+let toastTimer = null;
+function toast(msg, isErr) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, isErr ? 4200 : 2200);
+}
+
+function setStatus(txt, led) {
+  $('#statusTxt').textContent = txt;
+  const el = $('#statusLed');
+  el.className = 'led' + (led ? ' on-' + led : '') + (txt === 'RUN' ? ' blink' : '');
+}
+
+/* ------------------------------------------------------------------ */
+/*  Configuration controls                                             */
+/* ------------------------------------------------------------------ */
+const SIZE_OPTS = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768].map((v) => [v, v >= 1024 ? (v / 1024) + 'K' : String(v)]);
+const CONTROLS = [
+  { key: 'cache_size', label: 'CACHE SIZE', opts: SIZE_OPTS },
+  { key: 'block_size', label: 'BLOCK SIZE', opts: [4, 8, 16, 32, 64, 128].map((v) => [v, v + ' B']) },
+  { key: 'associativity', label: 'MAPPING', opts: [[1, 'DM'], [2, '2-WAY'], [4, '4-WAY'], [8, '8-WAY'], [16, '16-WAY'], [0, 'FULL']] },
+  { key: 'replacement', label: 'REPLACE', opts: [['LRU', 'LRU'], ['FIFO', 'FIFO'], ['RANDOM', 'RANDOM']] },
+  { key: 'write_policy', label: 'WRITE', opts: [['WB', 'WRITE-BACK'], ['WT', 'WRITE-THRU']] },
+  { key: 'write_allocate', label: 'ON W-MISS', opts: [[true, 'ALLOCATE'], [false, 'NO-ALLOC']] },
+  { key: 'address_bits', label: 'ADDR BITS', opts: [[16, '16'], [24, '24'], [32, '32']] },
+  { key: 'victim_entries', label: 'VICTIM $', opts: [[0, 'OFF'], [2, '2'], [4, '4'], [8, '8']], green: true },
+];
+
+function buildConfigControls() {
+  const body = $('#configBody');
+  body.innerHTML = '';
+  for (const c of CONTROLS) {
+    const row = document.createElement('div');
+    row.className = 'cfg-row';
+    const seg = document.createElement('div');
+    seg.className = 'seg' + (c.green ? ' green' : '');
+    seg.dataset.key = c.key;
+    for (const [v, lbl] of c.opts) {
+      const b = document.createElement('button');
+      b.textContent = lbl;
+      b.dataset.value = JSON.stringify(v);
+      b.addEventListener('click', () => { state.config[c.key] = v; syncConfigUI(); scheduleSimulate(); });
+      seg.appendChild(b);
+    }
+    row.innerHTML = `<span class="lbl">${c.label}</span>`;
+    row.appendChild(seg);
+    body.appendChild(row);
+  }
+  const timing = document.createElement('div');
+  timing.className = 'cfg-row';
+  timing.innerHTML = `<span class="lbl">TIMING</span>
+    <div class="num-row">
+      <label><span class="lbl">HIT</span><input class="num-in" id="hitTime" type="number" step="0.5" min="0"></label>
+      <label><span class="lbl">PENALTY</span><input class="num-in" id="missPenalty" type="number" step="1" min="0"></label>
+      <label><span class="lbl">SEED</span><input class="num-in" id="seed" type="number" step="1" min="0"></label>
+    </div>`;
+  body.appendChild(timing);
+  for (const [id, key] of [['#hitTime', 'hit_time'], ['#missPenalty', 'miss_penalty'], ['#seed', 'seed']]) {
+    $(id).addEventListener('change', (e) => { state.config[key] = Number(e.target.value); scheduleSimulate(); });
+  }
+}
+
+function syncConfigUI() {
+  for (const c of CONTROLS) {
+    const seg = document.querySelector(`.seg[data-key="${c.key}"]`);
+    if (!seg) continue;
+    const cur = JSON.stringify(state.config[c.key]);
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.value === cur));
+  }
+  $('#hitTime').value = state.config.hit_time;
+  $('#missPenalty').value = state.config.miss_penalty;
+  $('#seed').value = state.config.seed;
+}
+
+function cliEquivalent() {
+  const c = state.config;
+  const parts = ['python -m cachesim run', '--trace data/' + (state.traceName || 'trace.trace'),
+    '--size ' + c.cache_size, '--block ' + c.block_size, '--assoc ' + c.associativity,
+    '--repl ' + c.replacement, '--write ' + c.write_policy];
+  if (!c.write_allocate) parts.push('--no-allocate');
+  if (c.address_bits !== 32) parts.push('--addr-bits ' + c.address_bits);
+  if (c.victim_entries) parts.push('--victim ' + c.victim_entries);
+  return parts.join(' ');
+}
+
+/* ------------------------------------------------------------------ */
+/*  Simulation                                                         */
+/* ------------------------------------------------------------------ */
+let simTimer = null;
+function scheduleSimulate() {
+  clearTimeout(simTimer);
+  simTimer = setTimeout(simulate, 120);
+}
+
+async function simulate(opts) {
+  opts = opts || {};
+  if (!state.traceText.trim()) { renderGeometryOnly(); return; }
+  stopPlayback();
+  setStatus('BUSY', 'amber');
+  try {
+    const res = await api('/api/simulate', { config: state.config, trace: state.traceText, event_limit: state.meta.event_limit });
+    state.sim = res;
+    state.traceCount = res.total_accesses;
+    $('#configError').hidden = true;
+    const max = maxStep();
+    if (opts.goto === 'end') state.step = max;
+    else if (opts.goto === 'start') state.step = 0;
+    else state.step = Math.min(state.step, max);
+    rebuildGrid();
+    renderAll();
+    setStatus(state.step >= max && max > 0 ? 'END' : 'IDLE', state.step >= max && max > 0 ? 'amber' : null);
+  } catch (e) {
+    $('#configError').textContent = e.message;
+    $('#configError').hidden = false;
+    setStatus('ERROR', 'red');
+    renderGeometryOnly();
+  }
+}
+
+function maxStep() {
+  if (!state.sim) return 0;
+  return state.sim.events.length + (state.sim.truncated ? 1 : 0);
+}
+function atEnd() { return state.sim && state.step >= maxStep() && maxStep() > 0; }
+function isEndSummary() { return state.sim && state.sim.truncated && state.step === maxStep(); }
+function currentEvent() {
+  if (!state.sim || state.step === 0) return null;
+  if (isEndSummary()) return state.sim.last_event;   // final access of a long trace
+  return state.sim.events[state.step - 1];
+}
+function currentStats() {
+  if (!state.sim) return null;
+  if (isEndSummary()) return state.sim.stats;
+  if (state.step === 0) return null;
+  return state.sim.events[state.step - 1].stats_after;
+}
+
+function emptyGrid(cfg) {
+  const g = [];
+  for (let s = 0; s < cfg.num_sets; s++) {
+    const row = [];
+    for (let w = 0; w < cfg.ways; w++) row.push({ valid: false, tag: null, dirty: false, age: null });
+    g.push(row);
+  }
+  return g;
+}
+
+function rebuildGrid() {
+  const cfg = state.sim.config;
+  if (isEndSummary()) {
+    state.grid = state.sim.final_state;
+    state.heat = new Array(cfg.num_sets).fill('f');
+    for (let s = 0; s < cfg.num_sets; s++) if (!state.grid[s].some((w) => w.valid)) state.heat[s] = '';
+    return;
+  }
+  state.grid = emptyGrid(cfg);
+  state.heat = new Array(cfg.num_sets).fill('');
+  const evs = state.sim.events;
+  for (let i = 0; i < state.step; i++) {
+    const e = evs[i];
+    state.grid[e.set_index] = e.set_after;
+    state.heat[e.set_index] = e.result === 'HIT' ? 'h' : (e.result === 'VICTIM' ? 'v' : 'm');
+  }
+}
+
+function setStep(n, fromPlay) {
+  if (!state.sim) return;
+  const max = maxStep();
+  n = Math.max(0, Math.min(max, n));
+  if (n === state.step && !fromPlay) return;
+  state.step = n;
+  rebuildGrid();
+  renderAll();
+  if (!state.playing) setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
+}
+
+/* ---- playback ---- */
+function stepsPerSecond() { return Number($('#speed').value); }
+function startPlayback() {
+  if (!state.sim || atEnd()) return;
+  state.playing = true;
+  $('#btnPlay').textContent = '❚❚';
+  $('#btnPlay').classList.add('playing');
+  setStatus('RUN', 'green');
+  const tick = () => {
+    if (!state.playing) return;
+    setStep(state.step + 1, true);
+    if (atEnd()) { stopPlayback(); setStatus('END', 'amber'); return; }
+    state.timer = setTimeout(tick, 1000 / stepsPerSecond());
+  };
+  tick();
+}
+function stopPlayback() {
+  state.playing = false;
+  clearTimeout(state.timer);
+  $('#btnPlay').textContent = '▶';
+  $('#btnPlay').classList.remove('playing');
+}
+
+/* ------------------------------------------------------------------ */
+/*  Rendering                                                          */
+/* ------------------------------------------------------------------ */
+function renderAll() {
+  renderReadoutStrip();
+  renderGeometry();
+  renderDecode();
+  renderArray();
+  renderCounters();
+  renderLog();
+  $('#stepOut').textContent = state.sim ? `${state.step} / ${maxStep()}` : '0 / 0';
+}
+
+function renderGeometryOnly() {
+  renderReadoutStrip();
+  renderGeometry();
+}
+
+function geometry() {
+  // derived geometry, from the last successful simulation or computed locally
+  if (state.sim && JSON.stringify(cfgSubset(state.sim.config)) === JSON.stringify(cfgSubset(state.config))) return state.sim.config;
+  const c = state.config;
+  const num_blocks = c.cache_size / c.block_size;
+  const fa = c.associativity === 0 || c.associativity === num_blocks;
+  const ways = fa ? num_blocks : c.associativity;
+  const num_sets = Math.max(1, num_blocks / ways);
+  const log2 = (n) => Math.round(Math.log2(n));
+  const offset_bits = log2(c.block_size), index_bits = log2(num_sets);
+  return Object.assign({}, c, {
+    num_blocks, ways, num_sets, offset_bits, index_bits, tag_bits: c.address_bits - index_bits - offset_bits,
+    is_fully_associative: fa,
+    mapping_name: fa ? 'Fully associative' : (ways === 1 ? 'Direct mapped' : ways + '-way set associative'),
+    write_name: (c.write_policy === 'WB' ? 'Write-back' : 'Write-through') + (c.write_allocate ? ' / write-allocate' : ' / no-write-allocate'),
+  });
+}
+function cfgSubset(c) {
+  return ['cache_size', 'block_size', 'associativity', 'replacement', 'write_policy', 'write_allocate', 'address_bits', 'victim_entries'].map((k) => c[k]);
+}
+
+function renderReadoutStrip() {
+  const g = geometry();
+  const map = g.is_fully_associative ? 'FULL' : (g.ways === 1 ? 'DM' : g.ways + '-WAY');
+  const chips = [
+    ['MAP', map], ['SIZE', fmtBytes(g.cache_size)], ['BLK', g.block_size + ' B'],
+    ['SETS', g.num_sets + '×' + g.ways], ['REPL', g.replacement],
+    ['WR', g.write_policy + (g.write_allocate ? '/WA' : '/NWA')],
+  ];
+  if (g.victim_entries) chips.push(['VC', g.victim_entries]);
+  $('#readoutStrip').innerHTML = chips.map(([k, v]) => `<span class="chip"><b>${k}</b>${esc(v)}</span>`).join('');
+}
+
+function renderGeometry() {
+  const g = geometry();
+  const items = [
+    ['SETS', g.num_sets], ['WAYS', g.ways], ['LINES', g.num_blocks],
+    ['TAG BITS', g.tag_bits], ['INDEX BITS', g.index_bits], ['OFFSET BITS', g.offset_bits],
+  ];
+  $('#geoGrid').innerHTML = items.map(([k, v]) => `<div class="geo"><span class="lbl">${k}</span><span class="lcd">${v}</span></div>`).join('');
+  const total = g.address_bits;
+  const pct = (b) => (100 * b / total).toFixed(2) + '%';
+  $('#bitRuler').innerHTML =
+    `<span class="tag" style="width:${pct(g.tag_bits)}">TAG ${g.tag_bits}</span>` +
+    (g.index_bits ? `<span class="idx" style="width:${pct(g.index_bits)}">IDX ${g.index_bits}</span>` : '') +
+    `<span class="off" style="width:${pct(g.offset_bits)}">OFF ${g.offset_bits}</span>`;
+  $('#cliEquiv').textContent = cliEquivalent();
+}
+
+/* ---- address decode ---- */
+function bitsHTML(f) {
+  const grp = (cls, bits, cap) => {
+    if (!bits.length) return `<div class="grp ${cls} empty"><div class="row"></div><span class="cap">${cap}</span></div>`;
+    const cells = bits.split('').map((b) => `<span class="bit${b === '1' ? ' one' : ''}">${b}</span>`).join('');
+    return `<div class="grp ${cls}"><div class="row">${cells}</div><span class="cap">${cap}</span></div>`;
+  };
+  return grp('tag', f.tag_binary, `TAG · ${f.tag_bits} b`) +
+    grp('idx', f.index_binary, f.index_bits ? `INDEX · ${f.index_bits} b` : 'NO INDEX (FA)') +
+    grp('off', f.offset_binary, `OFFSET · ${f.offset_bits} b`);
+}
+function fieldsHTML(f, g) {
+  return `
+    <div class="field"><span class="lbl">TAG</span><span class="lcd">${esc(f.tag_hex)}</span></div>
+    <div class="field"><span class="lbl">INDEX → SET</span><span class="lcd blue">${f.index} / ${g.num_sets}</span></div>
+    <div class="field"><span class="lbl">OFFSET</span><span class="lcd green">${f.offset} (${hex(f.offset)})</span></div>
+    <div class="field"><span class="lbl">BLOCK ADDRESS</span><span class="lcd dimmed">${f.block_address}</span></div>`;
+}
+
+function renderDecode() {
+  const g = geometry();
+  const e = currentEvent();
+  const probeActive = state.probe && document.activeElement === $('#probeIn') && $('#probeIn').value.trim();
+  let f = null, op = '·', badge = '', note = '';
+  if (probeActive) {
+    f = state.probe.fields; op = '?';
+    note = `<b>PROBE</b> address decoded for the current geometry (not an access). Use INJECT to append it to the trace.`;
+  } else if (e) {
+    f = e.fields; op = e.op;
+    const mt = e.miss_type ? `<small>${e.miss_type.toUpperCase()}</small>` : '';
+    badge = `<div class="result-badge ${e.result}">${e.result === 'VICTIM' ? 'VICTIM HIT' : e.result}${mt}</div>`;
+    note = `<b>SET ${e.set_index}</b>${e.way === null ? '' : ` · WAY ${e.way}`} — ${esc(e.note)}`;
+    if (isEndSummary()) note = `<b>END · access ${state.traceCount} of ${state.traceCount}</b> (stepping covers the first ${state.sim.events.length}; counters show whole-trace totals) — ` + note;
+  } else if (state.sim) {
+    note = `Press ▶ or step forward. Each step is one memory access from the trace.`;
+  }
+  $('#addrOut').textContent = f ? f.hex : '— — — —';
+  $('#addrOut').classList.toggle('dimmed', !f);
+  const ob = $('#opBadge'); ob.textContent = op; ob.className = 'op-badge ' + (op === 'R' || op === 'W' ? op : '');
+  $('#resultBadge').outerHTML = badge || '<div class="result-badge" id="resultBadge"></div>';
+  if (badge) $('.result-badge').id = 'resultBadge';
+  $('#bitsOut').innerHTML = f ? bitsHTML(f) : bitsHTML({ tag_binary: '', index_binary: '', offset_binary: '', tag_bits: g.tag_bits, index_bits: g.index_bits, offset_bits: g.offset_bits });
+  $('#fieldsOut').innerHTML = f ? fieldsHTML(f, g) : '';
+  $('#noteOut').innerHTML = note;
+}
+
+/* ---- cache array ---- */
+const FULL_GRID_MAX_SETS = 64;
+function cellHTML(line, ways, cls, ev) {
+  const ageBars = (line.age !== null && line.age !== undefined && ways > 1)
+    ? `<span class="age">${Array.from({ length: ways }, (_, i) => `<i class="${i < ways - line.age ? 'on' : ''}"></i>`).join('')}</span>` : '';
+  const tag = line.valid ? hex(line.tag) : '— —';
+  return `<div class="cell${line.valid ? '' : ' empty'}${cls ? ' ' + cls : ''}"${ev ? ` data-ev="${esc(ev)}"` : ''}>
+    <span class="v${line.valid ? ' on' : ''}" title="valid"></span><span class="d${line.dirty ? ' on' : ''}" title="dirty"></span>
+    <span class="tagv">${tag}</span>${ageBars}</div>`;
+}
+
+function renderArray() {
+  const out = $('#arrayOut');
+  if (!state.sim) { out.innerHTML = '<div class="window-note">LOAD A TRACE TO POPULATE THE ARRAY</div>'; $('#heatStrip').hidden = true; $('#victimOut').hidden = true; return; }
+  const g = state.sim.config;
+  const e = currentEvent();
+  $('#arraySub').textContent = `${g.num_sets} sets × ${g.ways} ways · ${g.num_blocks} lines · ${fmtBytes(g.cache_size)} · ${g.mapping_name.toLowerCase()}`;
+  const curSet = e ? e.set_index : -1;
+  const flashCls = e ? (e.result === 'HIT' ? 'flash-hit hitcell' : (e.result === 'VICTIM' ? 'flash-victim victimcell' : 'flash-miss misscell')) : '';
+  let rows;
+  if (g.num_sets <= FULL_GRID_MAX_SETS) {
+    rows = Array.from({ length: g.num_sets }, (_, i) => i);
+    $('#heatStrip').hidden = true;
+  } else {
+    const center = curSet >= 0 ? curSet : 0;
+    const start = Math.max(0, Math.min(center - 3, g.num_sets - 8));
+    rows = Array.from({ length: 8 }, (_, i) => start + i);
+    const heat = $('#heatStrip');
+    heat.hidden = false;
+    heat.innerHTML = `<span class="heat-title">SET ACTIVITY MAP · ${g.num_sets} SETS · ONE SQUARE PER SET · DETAIL WINDOW SHOWS SETS ${start}–${start + 7}</span>` +
+      state.heat.map((h, i) => `<i class="${h}${i === curSet ? ' cur' : ''}" title="set ${i}"></i>`).join('');
+  }
+  const html = rows.map((s) => {
+    const lines = state.grid[s];
+    const cells = lines.map((line, w) => {
+      let cls = '', ev = null;
+      if (s === curSet && e && e.way === w) {
+        cls = flashCls;
+        if (e.evicted) ev = 'evict ' + hex(e.evicted.tag) + (e.evicted.dirty ? ' (dirty)' : '');
+        if (ev) cls += ' evicted-from';
+      }
+      return cellHTML(line, g.ways, cls, ev);
+    }).join('');
+    return `<div class="set-row${s === curSet ? ' current' : ''}"><span class="set-label">SET ${s}</span>${cells}</div>`;
+  }).join('');
+  out.innerHTML = html;
+  if (g.num_sets > FULL_GRID_MAX_SETS) {
+    out.insertAdjacentHTML('afterbegin', `<div class="window-note">DETAIL WINDOW · SETS ${rows[0]}–${rows[rows.length - 1]} OF ${g.num_sets}</div>`);
+  } else if (curSet >= 0) {
+    const row = out.children[curSet];
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+  }
+  // victim cache strip
+  const vc = $('#victimOut');
+  if (g.victim_entries) {
+    vc.hidden = false;
+    const entries = isEndSummary() ? state.sim.victim_state : (e ? e.victim_after : []);
+    const cells = [];
+    for (let i = 0; i < g.victim_entries; i++) {
+      const v = entries[i];
+      cells.push(v ? `<div class="cell"><span class="d${v.dirty ? ' on' : ''}"></span><span class="tagv">BLK ${hex(v.block)}</span></div>`
+        : `<div class="cell empty"><span class="d"></span><span class="tagv">— —</span></div>`);
+    }
+    vc.innerHTML = `<span class="set-label">VICTIM CACHE · ${g.victim_entries} × FA · FIFO</span>${cells.join('')}`;
+  } else vc.hidden = true;
+}
+
+/* ---- counters ---- */
+const COUNTER_ITEMS = [
+  ['accesses', 'ACCESSES', ''], ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'],
+  ['reads', 'READS', 'blue'], ['writes', 'WRITES', 'violet'],
+  ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', ''],
+  ['compulsory', 'COMPULSORY', 'amber'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'],
+  ['victim_hits', 'VICTIM HITS', 'blue'], ['writebacks', 'WRITE-BACKS', 'amber'],
+  ['mem_reads', 'MEM READS', ''], ['mem_writes', 'MEM WRITES', ''],
+];
+function renderCounters() {
+  const s = currentStats();
+  const z = (k) => (s ? s[k] : 0);
+  $('#hitRatio').textContent = s ? s.hit_ratio.toFixed(3) : '0.000';
+  $('#missRatio').textContent = s ? s.miss_ratio.toFixed(3) : '0.000';
+  $('#amat').textContent = s ? s.amat.toFixed(2) : '0.00';
+  const m = Math.max(1, z('misses'));
+  $('#missBar .comp').style.width = (100 * z('compulsory') / m) + '%';
+  $('#missBar .cap').style.width = (100 * z('capacity') / m) + '%';
+  $('#missBar .conf').style.width = (100 * z('conflict') / m) + '%';
+  $('#counterGrid').innerHTML = COUNTER_ITEMS.map(([k, l, c]) => `<div class="ctr"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}</span></div>`).join('') +
+    `<div class="ctr"><span class="lbl">MEM TRAFFIC</span><span class="val">${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB</span></div>`;
+  $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
+}
+
+/* ---- log ---- */
+let logBuiltFor = null;
+function renderLog() {
+  const out = $('#logOut');
+  if (!state.sim) { out.innerHTML = ''; $('#logSub').textContent = ''; return; }
+  const evs = state.sim.events;
+  if (logBuiltFor !== state.sim) {
+    logBuiltFor = state.sim;
+    const rows = evs.map((e, i) => {
+      const mt = e.miss_type ? `<small>${e.miss_type.slice(0, 4).toUpperCase()}</small>` : (e.result === 'VICTIM' ? '<small>VC</small>' : '');
+      return `<div class="log-row" data-i="${i + 1}"><span>${i + 1}</span><span class="op ${e.op}">${e.op}</span><span>${e.fields.hex}</span><span>${e.set_index}</span><span>${e.way === null ? '—' : e.way}</span><span class="r ${e.result}">${e.result === 'VICTIM' ? 'VICT' : e.result}${mt}</span></div>`;
+    });
+    if (state.sim.truncated) rows.push(`<div class="log-more">… ${state.traceCount - evs.length} more accesses (step to END for totals)</div>`);
+    out.innerHTML = rows.join('');
+    $('#logSub').textContent = `${state.traceCount} accesses${state.sim.truncated ? ` · first ${evs.length} steppable` : ''}`;
+  }
+  const rows = out.children;
+  for (let i = 0; i < evs.length; i++) {
+    const r = rows[i];
+    const n = i + 1;
+    r.classList.toggle('current', n === state.step);
+    r.classList.toggle('done', n < state.step || isEndSummary());
+    r.classList.toggle('pending', n > state.step && !isEndSummary());
+  }
+  const cur = out.querySelector('.log-row.current');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+  else if (state.step === 0) out.scrollTop = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Trace source                                                       */
+/* ------------------------------------------------------------------ */
+async function loadPresets() {
+  const { traces } = await api('/api/traces');
+  const list = $('#presetList');
+  list.innerHTML = traces.map((t) => `<button class="preset" data-name="${esc(t.name)}"><span class="name">${esc(t.name)}</span><span class="count">${t.accesses} acc</span><span class="desc">${esc(t.description)}</span></button>`).join('');
+  list.querySelectorAll('.preset').forEach((b) => b.addEventListener('click', () => loadPreset(b.dataset.name)));
+  return traces;
+}
+async function loadPreset(name) {
+  try {
+    const t = await api('/api/traces/' + encodeURIComponent(name));
+    state.presetCache[name] = t.text;
+    setTrace(t.text, name);
+    $$('.preset').forEach((b) => b.classList.toggle('active', b.dataset.name === name));
+  } catch (e) { toast(e.message, true); }
+}
+function setTrace(text, name) {
+  state.traceText = text;
+  state.traceName = name;
+  state.step = 0;
+  logBuiltFor = null;
+  $('#traceStatus').textContent = name;
+  simulate({ goto: 'start' });
+}
+
+function buildGenerator() {
+  const kinds = Object.keys(state.meta.generators);
+  const seg = $('#genKinds');
+  seg.innerHTML = kinds.map((k) => `<button data-kind="${k}">${k.toUpperCase()}</button>`).join('');
+  const pick = (k) => {
+    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.kind === k));
+    const params = state.meta.generators[k];
+    $('#genForm').innerHTML = Object.entries(params).map(([p, v]) => {
+      if (p === 'order') return `<label><span class="lbl">${p}</span><div class="seg" data-param="order"><button data-v="row" class="active">ROW</button><button data-v="col">COL</button></div></label>`;
+      return `<label><span class="lbl">${p.replace(/_/g, ' ')}</span><input class="num-in" data-param="${p}" type="number" step="${typeof v === 'number' && !Number.isInteger(v) ? '0.05' : '1'}" value="${v}"></label>`;
+    }).join('');
+    $('#genForm').querySelectorAll('.seg[data-param] button').forEach((b) => b.addEventListener('click', () => {
+      b.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+    }));
+    $('#genForm').dataset.kind = k;
+  };
+  seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => pick(b.dataset.kind)));
+  pick('loop');
+  $('#btnGenerate').addEventListener('click', async () => {
+    const kind = $('#genForm').dataset.kind;
+    const params = {};
+    $('#genForm').querySelectorAll('input[data-param]').forEach((i) => { params[i.dataset.param] = Number(i.value); });
+    const ord = $('#genForm').querySelector('.seg[data-param="order"] button.active');
+    if (ord) params.order = ord.dataset.v;
+    try {
+      const r = await api('/api/generate', { kind, params });
+      setTrace(r.text, `generated ${kind} (${r.count})`);
+      $$('.preset').forEach((b) => b.classList.remove('active'));
+      toast(`generated ${r.count} accesses`);
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Probe & inject                                                     */
+/* ------------------------------------------------------------------ */
+let probeTimer = null;
+async function probe() {
+  const v = $('#probeIn').value.trim();
+  if (!v) { state.probe = null; renderDecode(); return; }
+  try {
+    state.probe = await api('/api/decode', { config: state.config, address: v });
+    renderDecode();
+  } catch (e) { state.probe = null; }
+}
+function inject(op) {
+  const v = $('#probeIn').value.trim();
+  if (!v) { toast('type an address in PROBE first', true); return; }
+  let addr;
+  try { addr = Number(BigInt(v.startsWith('0x') || v.startsWith('0X') ? v : (/[a-fA-F]/.test(v) ? '0x' + v : v))); } catch (e) { toast('bad address', true); return; }
+  if (!Number.isFinite(addr) || addr < 0) { toast('bad address', true); return; }
+  state.traceText = state.traceText.replace(/\s*$/, '') + `\n${op} ${hex(addr, 8)}\n`;
+  state.traceName = state.traceName.replace(/ \+\d+$/, '') + (state.traceName.includes(' +') ? '' : '') ;
+  const m = state.traceName.match(/^(.*) \+(\d+)$/);
+  state.traceName = m ? `${m[1]} +${Number(m[2]) + 1}` : `${state.traceName} +1`;
+  $('#traceStatus').textContent = state.traceName;
+  logBuiltFor = null;
+  $('#probeIn').blur();
+  simulate({ goto: 'end' });
+  toast(`${op === 'R' ? 'read' : 'write'} of ${hex(addr)} appended`);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Experiments                                                        */
+/* ------------------------------------------------------------------ */
+const SWEEP_VALUES = {
+  associativity: [1, 2, 4, 8, 0],
+  block_size: [4, 8, 16, 32, 64, 128],
+  cache_size: [256, 512, 1024, 2048, 4096, 8192, 16384],
+  replacement: ['LRU', 'FIFO', 'RANDOM'],
+  write_policy: ['WB', 'WT'],
+  write_allocate: [true, false],
+  victim_entries: [0, 2, 4, 8],
+};
+const SWEEP_LABELS = {
+  associativity: 'ASSOC', block_size: 'BLOCK', cache_size: 'SIZE', replacement: 'REPL',
+  write_policy: 'WRITE', write_allocate: 'ALLOC', victim_entries: 'VICTIM',
+};
+const METRIC_LABELS = {
+  hit_ratio: 'HIT RATIO', miss_ratio: 'MISS RATIO', amat: 'AMAT', misstypes: 'MISS TYPES',
+  traffic_kib: 'TRAFFIC', writebacks: 'WRITE-BACKS', mem_reads: 'MEM READS', mem_writes: 'MEM WRITES',
+};
+const COLORS = ['#F5B942', '#58D68D', '#5DADE2', '#E8584F', '#B388EB', '#F1948A', '#76D7C4'];
+
+function buildExperimentControls() {
+  const mk = (el, items, cur, onpick) => {
+    el.innerHTML = items.map(([v, l]) => `<button data-v="${v}"${v === cur ? ' class="active"' : ''}>${l}</button>`).join('');
+    el.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+      el.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+      onpick(b.dataset.v);
+    }));
+  };
+  mk($('#sweepParam'), Object.entries(SWEEP_LABELS), state.sweepParam, (v) => { state.sweepParam = v; });
+  mk($('#sweepSeries'), [['', 'NONE']].concat(Object.entries(SWEEP_LABELS)), state.sweepSeries, (v) => { state.sweepSeries = v; });
+  mk($('#sweepMetric'), Object.entries(METRIC_LABELS), state.sweepMetric, (v) => { state.sweepMetric = v; });
+}
+
+async function runSweep() {
+  if (!state.traceText.trim()) { toast('load a trace first', true); return; }
+  const param = state.sweepParam;
+  let series = state.sweepSeries;
+  if (series === param) series = '';
+  setStatus('SWEEP', 'amber');
+  $('#btnSweep').disabled = true;
+  try {
+    const r = await api('/api/sweep', {
+      config: state.config, trace: state.traceText, param, values: SWEEP_VALUES[param],
+      series_param: series || null, series_values: series ? SWEEP_VALUES[series] : null,
+    });
+    state.sweep = { rows: r.rows, param, series, trace: state.traceName, accesses: r.accesses };
+    renderSweep();
+    $('#btnExportCsv').disabled = false;
+  } catch (e) { toast(e.message, true); }
+  $('#btnSweep').disabled = false;
+  setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
+}
+
+function renderSweep() {
+  const sw = state.sweep;
+  const metric = state.sweepMetric;
+  const cats = [], seriesNames = [];
+  for (const r of sw.rows) { if (!cats.includes(r.label)) cats.push(r.label); const s = r.series || ''; if (!seriesNames.includes(s)) seriesNames.push(s); }
+  let series, stacked = false, fmt = (v) => v.toFixed(3), ylabel = METRIC_LABELS[metric];
+  if (metric === 'misstypes') {
+    stacked = true; fmt = (v) => String(Math.round(v));
+    const useSeries = seriesNames.length > 1 ? seriesNames[0] : '';
+    series = ['compulsory', 'capacity', 'conflict'].map((k, i) => ({
+      name: k.toUpperCase(), color: ['#F5B942', '#B388EB', '#E8584F'][i],
+      values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === useSeries); return r && r.stats ? r.stats[k] : null; }),
+    }));
+    ylabel = 'MISSES' + (useSeries ? ' · ' + useSeries : '');
+  } else {
+    if (['writebacks', 'mem_reads', 'mem_writes'].includes(metric)) fmt = (v) => String(Math.round(v));
+    if (metric === 'amat' || metric === 'traffic_kib') fmt = (v) => v.toFixed(2);
+    series = seriesNames.map((s, i) => ({
+      name: s || METRIC_LABELS[metric], color: COLORS[i % COLORS.length],
+      values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === s); return r && r.stats ? r.stats[metric] : null; }),
+    }));
+  }
+  const title = `${METRIC_LABELS[metric]} vs ${SWEEP_LABELS[sw.param]}${sw.series ? ' · series: ' + SWEEP_LABELS[sw.series] : ''}`;
+  $('#chartOut').innerHTML = barChartSVG({ title, subtitle: `trace: ${sw.trace} · ${sw.accesses} accesses · base: ${cliEquivalent().replace('python -m cachesim run ', '')}`, cats, series, stacked, fmt, ylabel });
+  // table
+  const cols = ['hit_ratio', 'miss_ratio', 'compulsory', 'capacity', 'conflict', 'writebacks', 'mem_reads', 'mem_writes', 'traffic_kib', 'amat'];
+  const head = `<tr><th>SERIES</th><th>${SWEEP_LABELS[sw.param]}</th><th>SETS×WAYS</th>${cols.map((c) => `<th>${c.replace(/_/g, ' ').toUpperCase()}</th>`).join('')}</tr>`;
+  const body = sw.rows.map((r) => {
+    if (r.error) return `<tr><td>${esc(r.series || '—')}</td><td>${esc(r.label)}</td><td class="err" colspan="${cols.length + 1}">${esc(r.error)}</td></tr>`;
+    return `<tr><td>${esc(r.series || '—')}</td><td>${esc(r.label)}</td><td>${r.geometry.num_sets}×${r.geometry.ways}</td>${cols.map((c) => { const v = r.stats[c]; return `<td>${typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(c === 'amat' || c === 'traffic_kib' ? 2 : 4) : v}</td>`; }).join('')}</tr>`;
+  }).join('');
+  $('#sweepTable').innerHTML = `<table>${head}${body}</table>`;
+}
+
+async function compareTraces() {
+  const names = $$('.preset').map((b) => b.dataset.name);
+  if (!names.length) { toast('no preset traces', true); return; }
+  setStatus('SWEEP', 'amber');
+  $('#btnCompareTraces').disabled = true;
+  try {
+    const rows = [];
+    for (const n of names) {
+      if (!state.presetCache[n]) state.presetCache[n] = (await api('/api/traces/' + encodeURIComponent(n))).text;
+      const r = await api('/api/simulate', { config: state.config, trace: state.presetCache[n], event_limit: 0 });
+      rows.push({ param: 'trace', value: n, label: n.replace('.trace', ''), series: null, stats: r.stats,
+        geometry: { num_sets: r.config.num_sets, ways: r.config.ways } });
+    }
+    state.sweep = { rows, param: 'trace', series: '', trace: 'all presets', accesses: rows.reduce((a, r) => a + r.stats.accesses, 0) };
+    SWEEP_LABELS.trace = 'TRACE';
+    renderSweep();
+    $('#btnExportCsv').disabled = false;
+  } catch (e) { toast(e.message, true); }
+  $('#btnCompareTraces').disabled = false;
+  setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
+}
+
+function exportCsv() {
+  const sw = state.sweep; if (!sw) return;
+  const cols = ['hit_ratio', 'miss_ratio', 'compulsory', 'capacity', 'conflict', 'victim_hits', 'writebacks', 'mem_reads', 'mem_writes', 'traffic_kib', 'amat'];
+  const lines = [['series', sw.param, 'label'].concat(cols).join(',')];
+  for (const r of sw.rows) {
+    if (r.error) { lines.push([r.series || '', r.value, r.label, 'ERROR ' + r.error].join(',')); continue; }
+    lines.push([r.series || '', r.value, r.label].concat(cols.map((c) => r.stats[c])).join(','));
+  }
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `sweep_${sw.param}_${(sw.trace || 'trace').replace(/[^a-z0-9]+/gi, '_')}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/* ---- SVG bar chart (grouped or stacked), instrument style ---- */
+function niceMax(v) {
+  if (v <= 0) return 1;
+  if (v <= 1) return 1;
+  const exp = Math.floor(Math.log10(v)), base = Math.pow(10, exp);
+  for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * base) return m * base;
+  return 10 * base;
+}
+function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
+  const W = 820, H = 340, pl = 56, pr = 16, pt = 52, pb = 58;
+  const pw = W - pl - pr, ph = H - pt - pb;
+  let top;
+  if (stacked) top = niceMax(Math.max(...cats.map((_, ci) => series.reduce((a, s) => a + (s.values[ci] || 0), 0)), 0));
+  else top = niceMax(Math.max(...series.flatMap((s) => s.values.filter((v) => v !== null)), 0));
+  const y = (v) => pt + ph - ph * Math.min(v, top) / top;
+  let o = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, Menlo, monospace" font-size="11">`;
+  o += `<text x="${pl}" y="22" fill="#F5B942" font-size="12" letter-spacing="2">${esc(title.toUpperCase())}</text>`;
+  o += `<text x="${pl}" y="38" fill="#7E8591" font-size="9.5">${esc(subtitle)}</text>`;
+  for (let i = 0; i <= 5; i++) {
+    const yy = pt + ph - ph * i / 5, val = top * i / 5;
+    o += `<line x1="${pl}" y1="${yy}" x2="${pl + pw}" y2="${yy}" stroke="#2A2D34" stroke-dasharray="2 4"/>`;
+    o += `<text x="${pl - 8}" y="${yy}" fill="#7E8591" text-anchor="end" dominant-baseline="middle" font-size="10">${top > 1 ? +val.toFixed(2) : val.toFixed(2)}</text>`;
+  }
+  o += `<text x="14" y="${pt + ph / 2}" fill="#7E8591" font-size="9.5" transform="rotate(-90 14 ${pt + ph / 2})" text-anchor="middle" letter-spacing="1">${esc(ylabel)}</text>`;
+  const gw = pw / Math.max(1, cats.length);
+  const n = stacked ? 1 : series.length;
+  const bw = Math.max(4, (gw * 0.7 - 3 * (n - 1)) / n);
+  cats.forEach((c, ci) => {
+    const gx = pl + ci * gw + gw * 0.15;
+    if (stacked) {
+      let acc = 0;
+      series.forEach((s) => {
+        const v = s.values[ci]; if (v === null || v === undefined) return;
+        const y0 = y(acc), y1 = y(acc + v);
+        o += `<rect x="${gx + (gw * 0.7 - bw) / 2}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1)}" fill="${s.color}" opacity=".9"/>`;
+        if (v > 0 && y0 - y1 > 12) o += `<text x="${gx + gw * 0.35}" y="${(y0 + y1) / 2}" fill="#0C0D0F" font-size="9.5" text-anchor="middle" dominant-baseline="middle">${fmt(v)}</text>`;
+        acc += v;
+      });
+      o += `<text x="${gx + gw * 0.35}" y="${y(acc) - 4}" fill="#C9CDD4" font-size="9.5" text-anchor="middle">${fmt(acc)}</text>`;
+    } else {
+      series.forEach((s, si) => {
+        const v = s.values[ci];
+        const x = gx + si * (bw + 3);
+        if (v === null || v === undefined) { o += `<text x="${x + bw / 2}" y="${pt + ph - 6}" fill="#4C515B" font-size="9" text-anchor="middle">n/a</text>`; return; }
+        o += `<rect x="${x}" y="${y(v)}" width="${bw}" height="${pt + ph - y(v)}" fill="${s.color}" opacity=".9"/>`;
+        o += `<rect x="${x}" y="${y(v)}" width="${bw}" height="2" fill="#fff"/>`;
+        o += `<text x="${x + bw / 2}" y="${y(v) - 4}" fill="#C9CDD4" font-size="9" text-anchor="middle">${fmt(v)}</text>`;
+      });
+    }
+    o += `<text x="${pl + ci * gw + gw / 2}" y="${pt + ph + 16}" fill="#C9CDD4" text-anchor="middle" font-size="10.5">${esc(c)}</text>`;
+  });
+  o += `<line x1="${pl}" y1="${pt + ph}" x2="${pl + pw}" y2="${pt + ph}" stroke="#7E8591"/>`;
+  let lx = pl; const ly = H - 16;
+  series.forEach((s) => {
+    o += `<circle cx="${lx + 4}" cy="${ly}" r="4" fill="${s.color}"/><text x="${lx + 13}" y="${ly}" fill="#C9CDD4" dominant-baseline="middle" font-size="10">${esc(s.name)}</text>`;
+    lx += 13 + 6.5 * s.name.length + 22;
+  });
+  return o + '</svg>';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Wiring                                                             */
+/* ------------------------------------------------------------------ */
+function wire() {
+  $('#btnFirst').addEventListener('click', () => { stopPlayback(); setStep(0); });
+  $('#btnBack').addEventListener('click', () => { stopPlayback(); setStep(state.step - 1); });
+  $('#btnStep').addEventListener('click', () => { stopPlayback(); setStep(state.step + 1); });
+  $('#btnLast').addEventListener('click', () => { stopPlayback(); setStep(maxStep()); });
+  $('#btnPlay').addEventListener('click', () => { if (state.playing) { stopPlayback(); setStatus('IDLE'); } else { if (atEnd()) setStep(0); startPlayback(); } });
+  $('#speed').addEventListener('input', () => { $('#speedOut').textContent = stepsPerSecond() + '/s'; });
+  $('#speedOut').textContent = stepsPerSecond() + '/s';
+
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (e.key === ' ') { e.preventDefault(); $('#btnPlay').click(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); $('#btnStep').click(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); $('#btnBack').click(); }
+    else if (e.key === 'Home') { e.preventDefault(); $('#btnFirst').click(); }
+    else if (e.key === 'End') { e.preventDefault(); $('#btnLast').click(); }
+  });
+
+  $('#traceTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('.tab'); if (!b) return;
+    $$('#traceTabs .tab').forEach((t) => t.classList.toggle('active', t === b));
+    $$('#modTrace .tab-pane').forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+  });
+  $('#btnLoadPaste').addEventListener('click', () => {
+    const t = $('#pasteArea').value;
+    if (!t.trim()) { toast('nothing to load', true); return; }
+    setTrace(t, 'pasted trace');
+    $$('.preset').forEach((b) => b.classList.remove('active'));
+  });
+  $('#fileInput').addEventListener('change', (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { $('#pasteArea').value = rd.result.length > 200000 ? rd.result.slice(0, 200000) + '\n# (preview truncated; full file loaded)' : rd.result; setTrace(rd.result, f.name); $$('.preset').forEach((b) => b.classList.remove('active')); };
+    rd.readAsText(f);
+    e.target.value = '';
+  });
+
+  $('#probeIn').addEventListener('input', () => { clearTimeout(probeTimer); probeTimer = setTimeout(probe, 120); });
+  $('#probeIn').addEventListener('focus', () => { if ($('#probeIn').value.trim()) probe(); });
+  $('#probeIn').addEventListener('blur', () => setTimeout(renderDecode, 150));
+  $('#btnInjectR').addEventListener('click', () => inject('R'));
+  $('#btnInjectW').addEventListener('click', () => inject('W'));
+  $('#btnCopyCli').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(cliEquivalent()); toast('command copied'); } catch (e) { toast('clipboard unavailable', true); }
+  });
+
+  $('#btnSweep').addEventListener('click', runSweep);
+  $('#btnCompareTraces').addEventListener('click', compareTraces);
+  $('#btnExportCsv').addEventListener('click', exportCsv);
+  $('#sweepMetric').addEventListener('click', () => { if (state.sweep) renderSweep(); });
+  $('#logOut').addEventListener('click', (e) => { const r = e.target.closest('.log-row'); if (r) { stopPlayback(); setStep(Number(r.dataset.i)); } });
+}
+
+async function init() {
+  try {
+    state.meta = await api('/api/meta');
+  } catch (e) {
+    toast('cannot reach the simulator server: ' + e.message, true);
+    setStatus('ERROR', 'red');
+    return;
+  }
+  const d = state.meta.defaults;
+  state.config = {
+    cache_size: d.cache_size, block_size: d.block_size, associativity: d.associativity, replacement: d.replacement,
+    write_policy: d.write_policy, write_allocate: d.write_allocate, address_bits: d.address_bits,
+    victim_entries: d.victim_entries, hit_time: d.hit_time, miss_penalty: d.miss_penalty, seed: d.seed,
+    word_size: d.word_size, victim_penalty: d.victim_penalty,
+  };
+  // a friendlier starting point than the engine defaults: 1 KiB, 16 B, 4-way
+  state.config.associativity = 4;
+  $('#footVersion').textContent = 'CACHE-SIM v' + state.meta.version;
+  buildConfigControls();
+  syncConfigUI();
+  buildGenerator();
+  buildExperimentControls();
+  wire();
+  renderGeometryOnly();
+  renderArray();
+  renderCounters();
+  const traces = await loadPresets();
+  const first = traces.find((t) => t.name === 'loop.trace') || traces[0];
+  if (first) await loadPreset(first.name);
+  else { setStatus('IDLE'); toast('no traces in data/ — generate one or paste'); }
+}
+
+init();
