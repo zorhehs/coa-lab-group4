@@ -28,7 +28,10 @@
     <div class="speed">
       <span class="lbl">RATE</span>
       <input type="range" id="speed" min="1" max="40" value="8">
-      <span class="lcd lcd-xs" id="speedOut">4/s</span>
+      <span class="lcd lcd-xs" id="speedOut">8/s</span>
+      <span class="rate-presets" id="ratePresets" title="playback rate presets (+ / − keys)">
+        <button data-rate="1">1</button><button data-rate="4">4</button><button data-rate="8" class="active">8</button><button data-rate="20">20</button>
+      </span>
     </div>
     <div class="status">
       <span class="led" id="statusLed"></span>
@@ -36,6 +39,12 @@
     </div>
     <button class="tbtn tbtn-help" id="btnHelp" title="Shortcuts &amp; help (?)">?</button>
   </div>
+  <div class="trace-strip empty" id="traceStrip" title="trace timeline: one tick per access, click or drag to seek">
+    <canvas id="traceCanvas"></canvas>
+    <div class="trace-cursor" id="traceCursor" hidden></div>
+    <span class="trace-label" id="traceLabel">NO TRACE LOADED</span>
+  </div>
+  <div class="busy-bar" id="busyBar" hidden></div>
 </header>
 
 <main class="deck">
@@ -136,8 +145,16 @@
       </div>
       <div class="mod-body array-body">
         <div class="heat" id="heatStrip" hidden></div>
+        <div class="way-head" id="wayHead" hidden></div>
         <div class="array" id="arrayOut"></div>
         <div class="victim" id="victimOut" hidden></div>
+      </div>
+      <div class="bus-strip" id="busStrip">
+        <span><i class="led" id="ledMemR"></i>MEM READ</span>
+        <span><i class="led" id="ledMemW"></i>MEM WRITE</span>
+        <span><i class="led" id="ledWb"></i>WRITE-BACK</span>
+        <span><i class="led" id="ledVc"></i>VICTIM SWAP</span>
+        <span class="bus-note" id="busNote">memory bus idle</span>
       </div>
     </section>
 
@@ -177,6 +194,10 @@
           <div class="big"><span class="lbl">MISS RATIO</span><span class="lcd lcd-xl red" id="missRatio">0.000</span></div>
           <div class="big"><span class="lbl">AMAT</span><span class="lcd lcd-xl" id="amat">0.00</span><span class="unit">cyc</span></div>
         </div>
+        <div class="spark-wrap">
+          <span class="lbl">hit ratio over the trace <b id="sparkVal">—</b></span>
+          <canvas class="spark" id="sparkHit" height="44"></canvas>
+        </div>
         <div class="miss-bar" id="missBar"><span class="comp"></span><span class="cap"></span><span class="conf"></span></div>
         <div class="miss-bar-legend"><span><i class="sw comp"></i>COMPULSORY</span><span><i class="sw cap"></i>CAPACITY</span><span><i class="sw conf"></i>CONFLICT</span></div>
         <div class="counter-grid" id="counterGrid"></div>
@@ -215,6 +236,7 @@
           <dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>step one access forward / back</dd>
           <dt><kbd>Shift</kbd>+<kbd>→</kbd></dt><dd>jump ten accesses (either direction)</dd>
           <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>reset / run to the end</dd>
+          <dt><kbd>timeline</kbd></dt><dd>click or drag the strip under the transport to seek; green / red / blue ticks are hits, misses, victim hits</dd>
           <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>playback rate up / down</dd>
           <dt><kbd>/</kbd></dt><dd>jump to the PROBE field</dd>
           <dt><kbd>?</kbd></dt><dd>open or close this overlay</dd>

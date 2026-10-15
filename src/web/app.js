@@ -30,6 +30,7 @@ const state = {
   sweepSeries: '',
   sweepMetric: 'hit_ratio',
   sweepView: null,       // what the chart currently shows (for the hover tooltip)
+  hiddenSeries: new Set(), // chart series switched off via the legend
   presetCache: {},
 };
 
@@ -59,6 +60,7 @@ function setStatus(txt, led) {
   $('#statusTxt').textContent = txt;
   const el = $('#statusLed');
   el.className = 'led' + (led ? ' on-' + led : '') + (txt === 'RUN' ? ' blink' : '');
+  $('#busyBar').hidden = !(txt === 'BUSY' || txt === 'SWEEP');
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,6 +261,7 @@ function renderAll() {
   renderArray();
   renderCounters();
   renderLog();
+  renderTraceStrip();
   $('#stepOut').textContent = state.sim ? `${state.step} / ${maxStep()}` : '0 / 0';
 }
 
@@ -409,13 +412,142 @@ function revealIn(container, el, smooth) {
   if (delta) container.scrollTo({ top: container.scrollTop + delta, behavior: smooth ? 'smooth' : 'auto' });
 }
 
+const EMPTY_ARRAY_SVG = `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="8" width="40" height="10" rx="1"/><rect x="4" y="22" width="40" height="10" rx="1"/><rect x="4" y="36" width="40" height="6" rx="1" stroke-dasharray="3 3"/><circle cx="9" cy="13" r="1.5"/><circle cx="9" cy="27" r="1.5"/><path d="M18 13h20M18 27h20" stroke-dasharray="2 3"/></svg>`;
+
+// memory-bus LEDs under the array: what the current access cost the memory system
+function renderBus(e, pulse) {
+  const set = (id, on, color) => {
+    const el = $(id);
+    el.className = 'led' + (on ? ' on-' + color : '');
+    if (on && pulse) { el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse'); }
+  };
+  set('#ledMemR', !!(e && e.mem_read), 'blue');
+  set('#ledMemW', !!(e && e.mem_write), 'violet');
+  set('#ledWb', !!(e && e.writeback), 'amber');
+  set('#ledVc', !!(e && e.result === 'VICTIM'), 'blue');
+  let note = 'memory bus idle';
+  if (e) {
+    const parts = [];
+    const bs = state.sim ? state.sim.config.block_size : 0;
+    if (e.mem_read) parts.push(`fetch ${bs} B`);
+    if (e.writeback) parts.push(`write back ${bs} B`);
+    else if (e.mem_write) parts.push(`write ${state.sim ? state.sim.config.word_size : 4} B`);
+    if (e.result === 'VICTIM') parts.push('swap with victim cache');
+    note = parts.length ? parts.join(' · ') : 'no memory traffic';
+  }
+  $('#busNote').textContent = note;
+}
+
+/* ---- trace timeline (top strip) ---- */
+const traceView = { sim: null, base: null, w: 0, h: 20 };
+function buildTraceBase() {
+  const strip = $('#traceStrip');
+  const w = Math.max(1, Math.floor(strip.clientWidth)), h = traceView.h, dpr = window.devicePixelRatio || 1;
+  const base = document.createElement('canvas');
+  base.width = Math.floor(w * dpr); base.height = Math.floor(h * dpr);
+  const ctx = base.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = '#0b0c0e'; ctx.fillRect(0, 0, w, h);
+  const evs = state.sim.events, n = evs.length;
+  if (n) {
+    const colors = { HIT: '#58D68D', MISS: '#E8584F', VICTIM: '#5DADE2' };
+    const px = w / n;
+    if (px >= 1.5) {
+      for (let i = 0; i < n; i++) { ctx.fillStyle = colors[evs[i].result]; ctx.fillRect(i * px, 2, Math.max(1, px - 0.5), h - 4); }
+    } else {
+      // more accesses than pixels: each column shows the majority result, with a thin minority band
+      const cols = Math.floor(w);
+      for (let x = 0; x < cols; x++) {
+        const a = Math.floor(x * n / cols), b = Math.max(a + 1, Math.floor((x + 1) * n / cols));
+        let hit = 0, miss = 0, vic = 0;
+        for (let i = a; i < b; i++) { const r = evs[i].result; if (r === 'HIT') hit++; else if (r === 'VICTIM') vic++; else miss++; }
+        const tot = b - a;
+        const hh = Math.round((h - 4) * hit / tot), vh = Math.round((h - 4) * vic / tot);
+        ctx.fillStyle = colors.MISS; ctx.fillRect(x, 2, 1, h - 4);
+        ctx.fillStyle = colors.VICTIM; ctx.fillRect(x, 2 + (h - 4) - hh - vh, 1, vh);
+        ctx.fillStyle = colors.HIT; ctx.fillRect(x, 2 + (h - 4) - hh, 1, hh);
+      }
+    }
+  }
+  traceView.base = base; traceView.w = w; traceView.sim = state.sim;
+}
+function renderTraceStrip() {
+  const strip = $('#traceStrip'), cv = $('#traceCanvas'), cur = $('#traceCursor'), lab = $('#traceLabel');
+  if (!state.sim || !state.sim.events.length) {
+    strip.classList.add('empty'); cur.hidden = true; lab.textContent = 'NO TRACE LOADED';
+    const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+    traceView.sim = null;
+    return;
+  }
+  strip.classList.remove('empty');
+  const w = Math.floor(strip.clientWidth), h = traceView.h, dpr = window.devicePixelRatio || 1;
+  if (traceView.sim !== state.sim || traceView.w !== w) buildTraceBase();
+  if (cv.width !== Math.floor(w * dpr) || cv.height !== Math.floor(h * dpr)) { cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(traceView.base, 0, 0);
+  const n = state.sim.events.length, done = Math.min(state.step, n);
+  const x = w * done / n;
+  ctx.fillStyle = 'rgba(11,12,14,.72)';
+  ctx.fillRect(Math.floor(x * dpr), 0, cv.width - Math.floor(x * dpr), cv.height);   // dim what has not run yet
+  cur.hidden = false; cur.style.left = Math.max(0, Math.min(w - 2, x)) + 'px';
+  const extra = state.sim.truncated ? ` · +${state.traceCount - n} MORE (END)` : '';
+  lab.textContent = `${state.step} / ${maxStep()}${extra}`;
+}
+function traceSeek(ev) {
+  if (!state.sim) return;
+  const strip = $('#traceStrip'), r = strip.getBoundingClientRect();
+  const n = state.sim.events.length;
+  const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+  stopPlayback();
+  setStep(Math.round(frac * n));
+}
+
+/* ---- hit-ratio sparkline in COUNTERS ---- */
+const sparkView = { sim: null, pts: null };
+function renderSpark() {
+  const cv = $('#sparkHit'), val = $('#sparkVal');
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.floor(cv.clientWidth)), h = 44;
+  if (cv.width !== Math.floor(w * dpr)) { cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!state.sim || !state.sim.events.length) { val.textContent = '—'; return; }
+  if (sparkView.sim !== state.sim) { sparkView.pts = state.sim.events.map((e) => e.stats_after.hit_ratio); sparkView.sim = state.sim; }
+  const pts = sparkView.pts, n = pts.length;
+  const X = (i) => 3 + (w - 6) * i / Math.max(1, n - 1), Y = (v) => 4 + (h - 8) * (1 - v);
+  for (const g of [0.25, 0.5, 0.75]) { ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.beginPath(); ctx.moveTo(3, Y(g)); ctx.lineTo(w - 3, Y(g)); ctx.stroke(); }
+  const done = Math.min(state.step, n);
+  const line = (from, to, color, width) => {
+    if (to - from < 1) return;
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.beginPath();
+    for (let i = from; i < to; i++) { if (i === from) ctx.moveTo(X(i), Y(pts[i])); else ctx.lineTo(X(i), Y(pts[i])); }
+    ctx.stroke();
+  };
+  line(0, n, 'rgba(88,214,141,.18)', 1);                       // whole trace, faint
+  if (done > 1) {
+    ctx.fillStyle = 'rgba(88,214,141,.12)'; ctx.beginPath(); ctx.moveTo(X(0), h - 4);
+    for (let i = 0; i < done; i++) ctx.lineTo(X(i), Y(pts[i]));
+    ctx.lineTo(X(done - 1), h - 4); ctx.closePath(); ctx.fill();
+  }
+  line(0, done, '#58D68D', 1.5);
+  if (done > 0) {
+    const cx = X(done - 1), cy = Y(pts[done - 1]);
+    ctx.fillStyle = '#F5B942'; ctx.shadowColor = 'rgba(245,185,66,.8)'; ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+  }
+  val.textContent = done > 0 ? pts[done - 1].toFixed(3) : '—';
+}
+
 const arrayView = { sim: null, rowsKey: '', lastStep: -1 };
 function renderArray() {
   const out = $('#arrayOut');
   if (!state.sim) {
-    out.innerHTML = '<div class="window-note">LOAD A TRACE TO POPULATE THE ARRAY</div>';
-    $('#heatStrip').hidden = true; $('#victimOut').hidden = true;
+    out.innerHTML = `<div class="array-empty">${EMPTY_ARRAY_SVG}<span>LOAD A TRACE TO POPULATE THE ARRAY</span><span style="letter-spacing:.04em;color:var(--dim)">presets · generator · paste / file — in TRACE SOURCE</span></div>`;
+    $('#heatStrip').hidden = true; $('#victimOut').hidden = true; $('#wayHead').hidden = true;
     arrayView.sim = null; arrayView.rowsKey = ''; arrayView.lastStep = -1;
+    renderBus(null, false);
     return;
   }
   const g = state.sim.config;
@@ -441,7 +573,11 @@ function renderArray() {
     out.innerHTML = (g.num_sets > FULL_GRID_MAX_SETS ? `<div class="window-note">DETAIL WINDOW · SETS ${rows[0]}–${rows[rows.length - 1]} OF ${g.num_sets}</div>` : '') +
       rows.map((s) => `<div class="set-row" data-set="${s}"><span class="set-label">SET ${s}</span>${state.grid[s].map((line, w) => cellHTML(line, g.ways, w)).join('')}</div>`).join('');
     arrayView.sim = state.sim; arrayView.rowsKey = rowsKey;
+    const wh = $('#wayHead');
+    wh.hidden = false;
+    wh.innerHTML = '<span class="set-label">WAY</span>' + Array.from({ length: g.ways }, (_, w) => `<span class="way">${w}</span>`).join('');
   }
+  renderBus(e, forward);
   // patch every visible cell; mark the cell touched by the current access
   const resultCls = e ? (e.result === 'HIT' ? 'hitcell' : (e.result === 'VICTIM' ? 'victimcell' : 'misscell')) : '';
   for (const row of out.querySelectorAll('.set-row')) {
@@ -522,13 +658,14 @@ function renderCounters() {
   $('#counterGrid').innerHTML = COUNTER_ITEMS.map(([k, l, c]) => `<div class="ctr"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}</span></div>`).join('') +
     `<div class="ctr"><span class="lbl">MEM TRAFFIC</span><span class="val">${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB</span></div>`;
   $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
+  renderSpark();
 }
 
 /* ---- log ---- */
 let logBuiltFor = null;
 function renderLog() {
   const out = $('#logOut');
-  if (!state.sim) { out.innerHTML = ''; $('#logSub').textContent = ''; return; }
+  if (!state.sim) { out.innerHTML = '<div class="log-empty">NO ACCESSES YET</div>'; $('#logSub').textContent = ''; logBuiltFor = null; return; }
   const evs = state.sim.events;
   if (logBuiltFor !== state.sim) {
     logBuiltFor = state.sim;
@@ -690,8 +827,10 @@ async function runSweep() {
       series_param: series || null, series_values: series ? SWEEP_VALUES[series] : null,
     });
     state.sweep = { rows: r.rows, param, series, trace: state.traceName, accesses: r.accesses };
+    state.hiddenSeries.clear();
     renderSweep();
     $('#btnExportCsv').disabled = false;
+    toast(`sweep done · ${r.rows.length} configurations`);
   } catch (e) { toast(e.message, true); }
   $('#btnSweep').disabled = false;
   setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
@@ -719,6 +858,7 @@ function renderSweep() {
       values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === s); return r && r.stats ? r.stats[metric] : null; }),
     }));
   }
+  series.forEach((s) => { s.hidden = state.hiddenSeries.has(s.name); });
   const title = `${METRIC_LABELS[metric]} vs ${SWEEP_LABELS[sw.param]}${sw.series ? ' · series: ' + SWEEP_LABELS[sw.series] : ''}`;
   state.sweepView = { cats, series, stacked, fmt, metric, metricLabel: METRIC_LABELS[metric], rows: sw.rows, seriesParam: sw.series };
   $('#chartOut').innerHTML = barChartSVG({ title, subtitle: `trace: ${sw.trace} · ${sw.accesses} accesses · base: ${cliEquivalent().replace('python -m cachesim run ', '')}`, cats, series, stacked, fmt, ylabel });
@@ -783,8 +923,9 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
   const W = 820, H = 340, pl = 56, pr = 16, pt = 52, pb = 58;
   const pw = W - pl - pr, ph = H - pt - pb;
   let top;
-  if (stacked) top = niceMax(Math.max(...cats.map((_, ci) => series.reduce((a, s) => a + (s.values[ci] || 0), 0)), 0));
-  else top = niceMax(Math.max(...series.flatMap((s) => s.values.filter((v) => v !== null)), 0));
+  const shown = series.filter((s) => !s.hidden);
+  if (stacked) top = niceMax(Math.max(...cats.map((_, ci) => shown.reduce((a, s) => a + (s.values[ci] || 0), 0)), 0));
+  else top = niceMax(Math.max(...shown.flatMap((s) => s.values.filter((v) => v !== null)), 0));
   const y = (v) => pt + ph - ph * Math.min(v, top) / top;
   let o = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, Menlo, monospace" font-size="11">`;
   o += `<text x="${pl}" y="22" fill="#F5B942" font-size="12" letter-spacing="2">${esc(title.toUpperCase())}</text>`;
@@ -796,14 +937,14 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
   }
   o += `<text x="14" y="${pt + ph / 2}" fill="#7E8591" font-size="9.5" transform="rotate(-90 14 ${pt + ph / 2})" text-anchor="middle" letter-spacing="1">${esc(ylabel)}</text>`;
   const gw = pw / Math.max(1, cats.length);
-  const n = stacked ? 1 : series.length;
+  const n = stacked ? 1 : Math.max(1, shown.length);
   const bw = Math.max(4, (gw * 0.7 - 3 * (n - 1)) / n);
   cats.forEach((c, ci) => {
     const gx = pl + ci * gw + gw * 0.15;
     if (stacked) {
       let acc = 0;
       series.forEach((s) => {
-        const v = s.values[ci]; if (v === null || v === undefined) return;
+        const v = s.values[ci]; if (v === null || v === undefined || s.hidden) return;
         const y0 = y(acc), y1 = y(acc + v);
         o += `<rect class="bar" data-ci="${ci}" data-si="${series.indexOf(s)}" x="${gx + (gw * 0.7 - bw) / 2}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1)}" fill="${s.color}" opacity=".9"/>`;
         if (v > 0 && y0 - y1 > 12) o += `<text x="${gx + gw * 0.35}" y="${(y0 + y1) / 2}" fill="#0C0D0F" font-size="9.5" text-anchor="middle" dominant-baseline="middle">${fmt(v)}</text>`;
@@ -811,9 +952,9 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
       });
       o += `<text x="${gx + gw * 0.35}" y="${y(acc) - 4}" fill="#C9CDD4" font-size="9.5" text-anchor="middle">${fmt(acc)}</text>`;
     } else {
-      series.forEach((s, si) => {
-        const v = s.values[ci];
-        const x = gx + si * (bw + 3);
+      shown.forEach((s) => {
+        const si = series.indexOf(s), v = s.values[ci];
+        const x = gx + shown.indexOf(s) * (bw + 3);
         if (v === null || v === undefined) { o += `<text x="${x + bw / 2}" y="${pt + ph - 6}" fill="#4C515B" font-size="9" text-anchor="middle">n/a</text>`; return; }
         o += `<rect class="bar" data-ci="${ci}" data-si="${si}" x="${x}" y="${Math.min(y(v), pt + ph - 2)}" width="${bw}" height="${Math.max(2, pt + ph - y(v))}" fill="${s.color}" opacity=".9"/>`;
         o += `<rect x="${x}" y="${y(v)}" width="${bw}" height="2" fill="#fff"/>`;
@@ -825,9 +966,11 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
   o += `<line x1="${pl}" y1="${pt + ph}" x2="${pl + pw}" y2="${pt + ph}" stroke="#7E8591"/>`;
   let lx = pl; const ly = H - 16;
   series.forEach((s) => {
-    o += `<circle cx="${lx + 4}" cy="${ly}" r="4" fill="${s.color}"/><text x="${lx + 13}" y="${ly}" fill="#C9CDD4" dominant-baseline="middle" font-size="10">${esc(s.name)}</text>`;
+    o += `<g class="legend-item${s.hidden ? ' off' : ''}" data-name="${esc(s.name)}"><rect x="${lx - 4}" y="${ly - 9}" width="${13 + 6.5 * s.name.length + 10}" height="18" fill="transparent"/>` +
+      `<circle cx="${lx + 4}" cy="${ly}" r="4" fill="${s.color}"/><text x="${lx + 13}" y="${ly}" fill="#C9CDD4" dominant-baseline="middle" font-size="10">${esc(s.name)}</text></g>`;
     lx += 13 + 6.5 * s.name.length + 22;
   });
+  if (series.length > 1) o += `<text x="${W - pr}" y="${ly}" fill="#4C515B" font-size="9" text-anchor="end" dominant-baseline="middle">click a legend entry to hide / show it</text>`;
   return o + '</svg>';
 }
 
@@ -936,6 +1079,28 @@ function wire() {
   $('#helpOverlay').addEventListener('click', (e) => { if (e.target === $('#helpOverlay')) toggleHelp(false); });
   $('#chartOut').addEventListener('mousemove', chartHover);
   $('#chartOut').addEventListener('mouseleave', hideChartTip);
+  $('#chartOut').addEventListener('click', (e) => {
+    const it = e.target.closest ? e.target.closest('.legend-item') : null;
+    if (!it || !state.sweep) return;
+    const name = it.dataset.name;
+    if (state.hiddenSeries.has(name)) state.hiddenSeries.delete(name); else state.hiddenSeries.add(name);
+    renderSweep();
+  });
+  // trace timeline: click / drag to seek
+  const strip = $('#traceStrip');
+  let scrubbing = false;
+  strip.addEventListener('pointerdown', (e) => { scrubbing = true; strip.setPointerCapture(e.pointerId); traceSeek(e); });
+  strip.addEventListener('pointermove', (e) => { if (scrubbing) traceSeek(e); });
+  strip.addEventListener('pointerup', () => { scrubbing = false; });
+  strip.addEventListener('pointercancel', () => { scrubbing = false; });
+  // rate presets
+  $$('#ratePresets button').forEach((b) => b.addEventListener('click', () => { $('#speed').value = b.dataset.rate; $('#speed').dispatchEvent(new Event('input')); }));
+  $('#speed').addEventListener('input', () => { $$('#ratePresets button').forEach((b) => b.classList.toggle('active', Number(b.dataset.rate) === stepsPerSecond())); });
+  // sticky offsets follow the real top-bar height; canvases follow their width
+  const syncTop = () => document.documentElement.style.setProperty('--topbar-h', $('.topbar').offsetHeight + 'px');
+  syncTop();
+  new ResizeObserver(syncTop).observe($('.topbar'));
+  new ResizeObserver(() => { renderTraceStrip(); renderSpark(); }).observe(strip);
 
   $('#traceTabs').addEventListener('click', (e) => {
     const b = e.target.closest('.tab'); if (!b) return;
@@ -990,10 +1155,12 @@ async function init() {
   // a friendlier starting point than the engine defaults: 1 KiB, 16 B, 4-way
   state.config.associativity = 4;
   $('#footVersion').textContent = 'CACHE-SIM v' + state.meta.version;
+  $$('.deck .module').forEach((m, i) => m.style.setProperty('--i', i));
   buildConfigControls();
   syncConfigUI();
   buildGenerator();
   buildExperimentControls();
+  $('#chartOut').innerHTML = `<div class="chart-empty"><svg viewBox="0 0 54 36" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 32h46M4 32V4"/><rect x="10" y="18" width="7" height="14"/><rect x="22" y="10" width="7" height="22"/><rect x="34" y="22" width="7" height="10"/><rect x="46" y="6" width="4" height="26" stroke-dasharray="2 2"/></svg><span>NO SWEEP YET · CHOOSE AN AXIS AND PRESS RUN SWEEP</span></div>`;
   wire();
   renderGeometryOnly();
   renderArray();
