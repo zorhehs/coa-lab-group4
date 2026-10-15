@@ -34,6 +34,7 @@
       <span class="led" id="statusLed"></span>
       <span class="status-txt" id="statusTxt">IDLE</span>
     </div>
+    <button class="tbtn tbtn-help" id="btnHelp" title="Shortcuts &amp; help (?)">?</button>
   </div>
 </header>
 
@@ -197,6 +198,55 @@
   <span>GROUP 04 · ALIYAN ZULFIQAR · SHEHROZ RIAZ</span>
   <span id="footVersion"></span>
 </footer>
+
+<div class="overlay" id="helpOverlay" hidden>
+  <section class="module" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="screws"><i></i><i></i><i></i><i></i></div>
+    <div class="mod-head">
+      <span class="mod-title" id="helpTitle">HELP</span>
+      <span class="mod-sub">keyboard shortcuts · how to read the panels</span>
+      <span class="mod-right"><button class="mini" id="btnHelpClose">CLOSE · ESC</button></span>
+    </div>
+    <div class="mod-body help-grid">
+      <div>
+        <h4>TRANSPORT</h4>
+        <dl>
+          <dt><kbd>Space</kbd></dt><dd>play / pause</dd>
+          <dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>step one access forward / back</dd>
+          <dt><kbd>Shift</kbd>+<kbd>→</kbd></dt><dd>jump ten accesses (either direction)</dd>
+          <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>reset / run to the end</dd>
+          <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>playback rate up / down</dd>
+          <dt><kbd>/</kbd></dt><dd>jump to the PROBE field</dd>
+          <dt><kbd>?</kbd></dt><dd>open or close this overlay</dd>
+          <dt><kbd>Esc</kbd></dt><dd>close the overlay · leave a text field</dd>
+        </dl>
+      </div>
+      <div>
+        <h4>READING THE CACHE ARRAY</h4>
+        <div class="legend-list">
+          <span><i class="led on-green"></i>HIT — the block was already in the set</span>
+          <span><i class="led on-red"></i>MISS — fetched from memory; COMP / CAPA / CONF is the 3C type, a red tag floating out is the evicted line</span>
+          <span><i class="led on-blue"></i>VICTIM — found in the victim cache and swapped back, no memory read</span>
+          <span><i class="dot" style="background:var(--green)"></i>left LED valid bit · <i class="dot dirty"></i>right LED dirty bit (write-back only)</span>
+          <span><i class="dot age"></i>bars under a line: LRU age, full = most recently used</span>
+        </div>
+      </div>
+      <div>
+        <h4>THE 3C MISS TYPES</h4>
+        <p><b>Compulsory</b> — first touch of a block; no cache avoids it.<br>
+           <b>Capacity</b> — a fully associative cache of the same size would also miss: the working set is too big.<br>
+           <b>Conflict</b> — only the mapping caused it; more ways (or a victim cache) would have kept the block.</p>
+      </div>
+      <div>
+        <h4>WORKFLOW</h4>
+        <p><b>1</b> set geometry and policies in CONFIGURATION — the whole trace re-runs instantly.<br>
+           <b>2</b> load a preset, generate a pattern, or paste a Dinero / Valgrind trace.<br>
+           <b>3</b> step through ADDRESS DECODE and the array; COUNTERS and the ACCESS LOG follow the current step.<br>
+           <b>4</b> RUN SWEEP in EXPERIMENTS to compare settings — hover a bar for its numbers, EXPORT CSV for the report.</p>
+      </div>
+    </div>
+  </section>
+</div>
 
 <div class="toast" id="toast" hidden></div>
 <script src="app.js"></script>

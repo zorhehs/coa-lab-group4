@@ -29,6 +29,7 @@ const state = {
   sweepParam: 'associativity',
   sweepSeries: '',
   sweepMetric: 'hit_ratio',
+  sweepView: null,       // what the chart currently shows (for the hover tooltip)
   presetCache: {},
 };
 
@@ -228,6 +229,7 @@ function stepsPerSecond() { return Number($('#speed').value); }
 function startPlayback() {
   if (!state.sim || atEnd()) return;
   state.playing = true;
+  applyAnimSpeed();
   $('#btnPlay').textContent = '❚❚';
   $('#btnPlay').classList.add('playing');
   setStatus('RUN', 'green');
@@ -242,6 +244,7 @@ function startPlayback() {
 function stopPlayback() {
   state.playing = false;
   clearTimeout(state.timer);
+  applyAnimSpeed();
   $('#btnPlay').textContent = '▶';
   $('#btnPlay').classList.remove('playing');
 }
@@ -332,6 +335,7 @@ function fieldsHTML(f, g) {
     <div class="field"><span class="lbl">BLOCK ADDRESS</span><span class="lcd dimmed">${f.block_address}</span></div>`;
 }
 
+const decodeView = { badgeKey: '' };
 function renderDecode() {
   const g = geometry();
   const e = currentEvent();
@@ -352,7 +356,10 @@ function renderDecode() {
   $('#addrOut').textContent = f ? f.hex : '— — — —';
   $('#addrOut').classList.toggle('dimmed', !f);
   const ob = $('#opBadge'); ob.textContent = op; ob.className = 'op-badge ' + (op === 'R' || op === 'W' ? op : '');
-  $('#resultBadge').outerHTML = badge || '<div class="result-badge" id="resultBadge"></div>';
+  const badgeKey = e && !probeActive ? `${state.step}:${e.fields.hex}:${e.result}` : '';
+  const animBadge = badge && badgeKey !== decodeView.badgeKey;
+  decodeView.badgeKey = badgeKey;
+  $('#resultBadge').outerHTML = badge ? badge.replace('class="result-badge', `class="result-badge${animBadge ? ' anim' : ''}`) : '<div class="result-badge" id="resultBadge"></div>';
   if (badge) $('.result-badge').id = 'resultBadge';
   $('#bitsOut').innerHTML = f ? bitsHTML(f) : bitsHTML({ tag_binary: '', index_binary: '', offset_binary: '', tag_bits: g.tag_bits, index_bits: g.index_bits, offset_bits: g.offset_bits });
   $('#fieldsOut').innerHTML = f ? fieldsHTML(f, g) : '';
@@ -361,23 +368,61 @@ function renderDecode() {
 
 /* ---- cache array ---- */
 const FULL_GRID_MAX_SETS = 64;
-function cellHTML(line, ways, cls, ev) {
-  const ageBars = (line.age !== null && line.age !== undefined && ways > 1)
-    ? `<span class="age">${Array.from({ length: ways }, (_, i) => `<i class="${i < ways - line.age ? 'on' : ''}"></i>`).join('')}</span>` : '';
+function cellHTML(line, ways, way) {
+  const ageBars = ways > 1
+    ? `<span class="age">${Array.from({ length: ways }, (_, i) => `<i class="${line.age !== null && line.age !== undefined && i < ways - line.age ? 'on' : ''}"></i>`).join('')}</span>` : '';
   const tag = line.valid ? hex(line.tag) : '— —';
-  return `<div class="cell${line.valid ? '' : ' empty'}${cls ? ' ' + cls : ''}"${ev ? ` data-ev="${esc(ev)}"` : ''}>
+  return `<div class="cell${line.valid ? '' : ' empty'}" data-way="${way}">
     <span class="v${line.valid ? ' on' : ''}" title="valid"></span><span class="d${line.dirty ? ' on' : ''}" title="dirty"></span>
     <span class="tagv">${tag}</span>${ageBars}</div>`;
 }
 
+// patch one cell in place so CSS transitions / animations can run between steps
+function patchCell(cell, line, ways) {
+  cell.classList.toggle('empty', !line.valid);
+  cell.querySelector('.v').classList.toggle('on', !!line.valid);
+  cell.querySelector('.d').classList.toggle('on', !!line.dirty);
+  const tag = line.valid ? hex(line.tag) : '— —';
+  const tv = cell.querySelector('.tagv');
+  if (tv.textContent !== tag) tv.textContent = tag;
+  const age = cell.querySelector('.age');
+  if (age) {
+    const hasAge = line.age !== null && line.age !== undefined;
+    Array.from(age.children).forEach((i, k) => i.classList.toggle('on', hasAge && k < ways - line.age));
+  }
+}
+
+function restartAnimation(el, cls, remove) {
+  el.classList.remove(...remove);
+  void el.offsetWidth;                       // reflow so the same animation can play again
+  el.classList.add(cls);
+}
+
+
+// scroll an element into view inside its own scroll container without moving the page
+function revealIn(container, el, smooth) {
+  if (!container || !el) return;
+  const c = container.getBoundingClientRect(), r = el.getBoundingClientRect();
+  let delta = 0;
+  if (r.top < c.top + 4) delta = r.top - c.top - 4;
+  else if (r.bottom > c.bottom - 4) delta = r.bottom - c.bottom + 4;
+  if (delta) container.scrollTo({ top: container.scrollTop + delta, behavior: smooth ? 'smooth' : 'auto' });
+}
+
+const arrayView = { sim: null, rowsKey: '', lastStep: -1 };
 function renderArray() {
   const out = $('#arrayOut');
-  if (!state.sim) { out.innerHTML = '<div class="window-note">LOAD A TRACE TO POPULATE THE ARRAY</div>'; $('#heatStrip').hidden = true; $('#victimOut').hidden = true; return; }
+  if (!state.sim) {
+    out.innerHTML = '<div class="window-note">LOAD A TRACE TO POPULATE THE ARRAY</div>';
+    $('#heatStrip').hidden = true; $('#victimOut').hidden = true;
+    arrayView.sim = null; arrayView.rowsKey = ''; arrayView.lastStep = -1;
+    return;
+  }
   const g = state.sim.config;
   const e = currentEvent();
   $('#arraySub').textContent = `${g.num_sets} sets × ${g.ways} ways · ${g.num_blocks} lines · ${fmtBytes(g.cache_size)} · ${g.mapping_name.toLowerCase()}`;
   const curSet = e ? e.set_index : -1;
-  const flashCls = e ? (e.result === 'HIT' ? 'flash-hit hitcell' : (e.result === 'VICTIM' ? 'flash-victim victimcell' : 'flash-miss misscell')) : '';
+  const forward = arrayView.sim === state.sim && state.step === arrayView.lastStep + 1 && !!e && !isEndSummary();
   let rows;
   if (g.num_sets <= FULL_GRID_MAX_SETS) {
     rows = Array.from({ length: g.num_sets }, (_, i) => i);
@@ -391,26 +436,54 @@ function renderArray() {
     heat.innerHTML = `<span class="heat-title">SET ACTIVITY MAP · ${g.num_sets} SETS · ONE SQUARE PER SET · DETAIL WINDOW SHOWS SETS ${start}–${start + 7}</span>` +
       state.heat.map((h, i) => `<i class="${h}${i === curSet ? ' cur' : ''}" title="set ${i}"></i>`).join('');
   }
-  const html = rows.map((s) => {
-    const lines = state.grid[s];
-    const cells = lines.map((line, w) => {
-      let cls = '', ev = null;
-      if (s === curSet && e && e.way === w) {
-        cls = flashCls;
-        if (e.evicted) ev = 'evict ' + hex(e.evicted.tag) + (e.evicted.dirty ? ' (dirty)' : '');
-        if (ev) cls += ' evicted-from';
-      }
-      return cellHTML(line, g.ways, cls, ev);
-    }).join('');
-    return `<div class="set-row${s === curSet ? ' current' : ''}"><span class="set-label">SET ${s}</span>${cells}</div>`;
-  }).join('');
-  out.innerHTML = html;
-  if (g.num_sets > FULL_GRID_MAX_SETS) {
-    out.insertAdjacentHTML('afterbegin', `<div class="window-note">DETAIL WINDOW · SETS ${rows[0]}–${rows[rows.length - 1]} OF ${g.num_sets}</div>`);
-  } else if (curSet >= 0) {
-    const row = out.children[curSet];
-    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+  const rowsKey = `${rows[0]}:${rows.length}:${g.ways}`;
+  if (arrayView.sim !== state.sim || arrayView.rowsKey !== rowsKey) {
+    out.innerHTML = (g.num_sets > FULL_GRID_MAX_SETS ? `<div class="window-note">DETAIL WINDOW · SETS ${rows[0]}–${rows[rows.length - 1]} OF ${g.num_sets}</div>` : '') +
+      rows.map((s) => `<div class="set-row" data-set="${s}"><span class="set-label">SET ${s}</span>${state.grid[s].map((line, w) => cellHTML(line, g.ways, w)).join('')}</div>`).join('');
+    arrayView.sim = state.sim; arrayView.rowsKey = rowsKey;
   }
+  // patch every visible cell; mark the cell touched by the current access
+  const resultCls = e ? (e.result === 'HIT' ? 'hitcell' : (e.result === 'VICTIM' ? 'victimcell' : 'misscell')) : '';
+  for (const row of out.querySelectorAll('.set-row')) {
+    const s = Number(row.dataset.set);
+    const isCur = s === curSet;
+    row.classList.toggle('current', isCur);
+    row.querySelectorAll('.cell').forEach((cell, w) => {
+      patchCell(cell, state.grid[s][w], g.ways);
+      const touched = isCur && e && e.way === w;
+      cell.classList.toggle('hitcell', touched && resultCls === 'hitcell');
+      cell.classList.toggle('misscell', touched && resultCls === 'misscell');
+      cell.classList.toggle('victimcell', touched && resultCls === 'victimcell');
+      const ev = touched && e.evicted ? 'evict ' + hex(e.evicted.tag) + (e.evicted.dirty ? ' (dirty)' : '') : null;
+      cell.classList.toggle('evicted-from', !!ev);
+      if (ev) cell.dataset.ev = ev; else delete cell.dataset.ev;
+    });
+    if (isCur && forward) {
+      if (e.way === null || e.way === undefined) {
+        restartAnimation(row, 'anim-miss', ['anim-miss']);      // nothing allocated (no-write-allocate)
+      } else {
+        const cell = row.querySelectorAll('.cell')[e.way];
+        if (cell) {
+          const cls = e.result === 'HIT' ? 'anim-hit' : (e.result === 'VICTIM' ? 'anim-victim' : 'anim-miss');
+          restartAnimation(cell, cls, ['anim-hit', 'anim-miss', 'anim-victim']);
+          if (e.result !== 'HIT') restartAnimation(cell.querySelector('.tagv'), 'anim-in', ['anim-in']);
+          if (e.evicted) {
+            cell.querySelectorAll('.ghost').forEach((x) => x.remove());
+            const ghost = document.createElement('span');
+            ghost.className = 'ghost' + (e.evicted.dirty ? ' dirty' : '');
+            ghost.textContent = '⟶ ' + hex(e.evicted.tag);
+            ghost.addEventListener('animationend', () => ghost.remove());
+            cell.appendChild(ghost);
+          }
+        }
+      }
+    }
+  }
+  if (curSet >= 0 && g.num_sets <= FULL_GRID_MAX_SETS) {
+    const row = out.querySelector(`.set-row[data-set="${curSet}"]`);
+    revealIn(out.closest('.array-body'), row, !(state.playing && stepsPerSecond() > 10));
+  }
+  arrayView.lastStep = state.step;
   // victim cache strip
   const vc = $('#victimOut');
   if (g.victim_entries) {
@@ -438,9 +511,10 @@ const COUNTER_ITEMS = [
 function renderCounters() {
   const s = currentStats();
   const z = (k) => (s ? s[k] : 0);
-  $('#hitRatio').textContent = s ? s.hit_ratio.toFixed(3) : '0.000';
-  $('#missRatio').textContent = s ? s.miss_ratio.toFixed(3) : '0.000';
-  $('#amat').textContent = s ? s.amat.toFixed(2) : '0.00';
+  const setLcd = (sel, txt) => { const el = $(sel); if (el.textContent !== txt) { el.textContent = txt; restartAnimation(el, 'tick', ['tick']); } };
+  setLcd('#hitRatio', s ? s.hit_ratio.toFixed(3) : '0.000');
+  setLcd('#missRatio', s ? s.miss_ratio.toFixed(3) : '0.000');
+  setLcd('#amat', s ? s.amat.toFixed(2) : '0.00');
   const m = Math.max(1, z('misses'));
   $('#missBar .comp').style.width = (100 * z('compulsory') / m) + '%';
   $('#missBar .cap').style.width = (100 * z('capacity') / m) + '%';
@@ -475,7 +549,7 @@ function renderLog() {
     r.classList.toggle('pending', n > state.step && !isEndSummary());
   }
   const cur = out.querySelector('.log-row.current');
-  if (cur) cur.scrollIntoView({ block: 'nearest' });
+  if (cur) revealIn(out, cur, !(state.playing && stepsPerSecond() > 10));
   else if (state.step === 0) out.scrollTop = 0;
 }
 
@@ -646,7 +720,9 @@ function renderSweep() {
     }));
   }
   const title = `${METRIC_LABELS[metric]} vs ${SWEEP_LABELS[sw.param]}${sw.series ? ' · series: ' + SWEEP_LABELS[sw.series] : ''}`;
+  state.sweepView = { cats, series, stacked, fmt, metric, metricLabel: METRIC_LABELS[metric], rows: sw.rows, seriesParam: sw.series };
   $('#chartOut').innerHTML = barChartSVG({ title, subtitle: `trace: ${sw.trace} · ${sw.accesses} accesses · base: ${cliEquivalent().replace('python -m cachesim run ', '')}`, cats, series, stacked, fmt, ylabel });
+  hideChartTip();
   // table
   const cols = ['hit_ratio', 'miss_ratio', 'compulsory', 'capacity', 'conflict', 'writebacks', 'mem_reads', 'mem_writes', 'traffic_kib', 'amat'];
   const head = `<tr><th>SERIES</th><th>${SWEEP_LABELS[sw.param]}</th><th>SETS×WAYS</th>${cols.map((c) => `<th>${c.replace(/_/g, ' ').toUpperCase()}</th>`).join('')}</tr>`;
@@ -729,7 +805,7 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
       series.forEach((s) => {
         const v = s.values[ci]; if (v === null || v === undefined) return;
         const y0 = y(acc), y1 = y(acc + v);
-        o += `<rect x="${gx + (gw * 0.7 - bw) / 2}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1)}" fill="${s.color}" opacity=".9"/>`;
+        o += `<rect class="bar" data-ci="${ci}" data-si="${series.indexOf(s)}" x="${gx + (gw * 0.7 - bw) / 2}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1)}" fill="${s.color}" opacity=".9"/>`;
         if (v > 0 && y0 - y1 > 12) o += `<text x="${gx + gw * 0.35}" y="${(y0 + y1) / 2}" fill="#0C0D0F" font-size="9.5" text-anchor="middle" dominant-baseline="middle">${fmt(v)}</text>`;
         acc += v;
       });
@@ -739,7 +815,7 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
         const v = s.values[ci];
         const x = gx + si * (bw + 3);
         if (v === null || v === undefined) { o += `<text x="${x + bw / 2}" y="${pt + ph - 6}" fill="#4C515B" font-size="9" text-anchor="middle">n/a</text>`; return; }
-        o += `<rect x="${x}" y="${y(v)}" width="${bw}" height="${pt + ph - y(v)}" fill="${s.color}" opacity=".9"/>`;
+        o += `<rect class="bar" data-ci="${ci}" data-si="${si}" x="${x}" y="${Math.min(y(v), pt + ph - 2)}" width="${bw}" height="${Math.max(2, pt + ph - y(v))}" fill="${s.color}" opacity=".9"/>`;
         o += `<rect x="${x}" y="${y(v)}" width="${bw}" height="2" fill="#fff"/>`;
         o += `<text x="${x + bw / 2}" y="${y(v) - 4}" fill="#C9CDD4" font-size="9" text-anchor="middle">${fmt(v)}</text>`;
       });
@@ -755,6 +831,73 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
   return o + '</svg>';
 }
 
+
+/* ---- chart tooltip: hover a bar for its numbers; the matching table row lights up ---- */
+function hideChartTip() {
+  const tip = $('#chartTip'); if (tip) tip.hidden = true;
+  const svg = $('#chartOut svg'); if (svg) { svg.classList.remove('hovering'); svg.querySelectorAll('rect.bar.hot').forEach((r) => r.classList.remove('hot')); }
+  $$('#sweepTable tr.hot').forEach((r) => r.classList.remove('hot'));
+}
+function chartHover(ev) {
+  const bar = ev.target.closest ? ev.target.closest('rect.bar') : null;
+  const svg = $('#chartOut svg');
+  const v = state.sweepView;
+  if (!bar || !svg || !v) { hideChartTip(); return; }
+  const ci = Number(bar.dataset.ci), si = Number(bar.dataset.si);
+  const cat = v.cats[ci];
+  let tip = $('#chartTip');
+  if (!tip) { tip = document.createElement('div'); tip.id = 'chartTip'; tip.className = 'chart-tip'; $('#chartOut').appendChild(tip); }
+  const seriesName = v.series[si] ? v.series[si].name : '';
+  const lines = v.series.map((s, k) => {
+    const val = s.values[ci];
+    return `<div class="row${k === si ? ' hot' : ''}"><span><i style="background:${s.color}"></i>${esc(s.name)}</span><span class="val">${val === null || val === undefined ? 'n/a' : v.fmt(val)}</span></div>`;
+  }).join('');
+  // full stats of the hovered configuration from the sweep table
+  const wanted = v.stacked ? '' : (v.seriesParam ? seriesName : '');
+  const row = v.rows.find((r) => r.label === cat && (r.series || '') === (v.stacked ? (v.rows.find((x) => x.label === cat) || {}).series || '' : wanted)) || v.rows.find((r) => r.label === cat);
+  let extra = '';
+  if (row && row.stats) {
+    const st = row.stats;
+    extra = `<div class="sep"></div>` +
+      `<div class="row"><span>hit ratio</span><span>${st.hit_ratio.toFixed(3)}</span></div>` +
+      `<div class="row"><span>AMAT</span><span>${st.amat.toFixed(2)} cyc</span></div>` +
+      `<div class="row"><span>misses C/C/C</span><span>${st.compulsory} / ${st.capacity} / ${st.conflict}</span></div>` +
+      (row.geometry ? `<div class="row"><span>sets × ways</span><span>${row.geometry.num_sets} × ${row.geometry.ways}</span></div>` : '');
+  }
+  tip.innerHTML = `<b>${esc(cat)}${v.seriesParam && !v.stacked ? ' · ' + esc(seriesName) : ''}</b>${lines}${extra}`;
+  tip.hidden = false;
+  const host = $('#chartOut').getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = ev.clientX - host.left + 14, y = ev.clientY - host.top - th - 12;
+  if (x + tw > host.width - 4) x = ev.clientX - host.left - tw - 14;
+  if (y < 4) y = ev.clientY - host.top + 16;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  svg.classList.add('hovering');
+  svg.querySelectorAll('rect.bar').forEach((r) => r.classList.toggle('hot', Number(r.dataset.ci) === ci && (v.stacked || Number(r.dataset.si) === si)));
+  const trs = $$('#sweepTable tbody tr, #sweepTable tr');
+  trs.forEach((tr) => tr.classList.remove('hot'));
+  if (row) { const idx = v.rows.indexOf(row); const tr = $('#sweepTable table') && $('#sweepTable table').rows[idx + 1]; if (tr) tr.classList.add('hot'); }
+}
+
+/* ---- help overlay & shortcuts ---- */
+function toggleHelp(show) {
+  const o = $('#helpOverlay');
+  const vis = show === undefined ? o.hidden : show;
+  o.hidden = !vis;
+  if (vis) $('#btnHelpClose').focus(); else $('#btnHelp').blur();
+}
+function nudgeRate(delta) {
+  const s = $('#speed');
+  s.value = Math.max(Number(s.min), Math.min(Number(s.max), Number(s.value) + delta));
+  s.dispatchEvent(new Event('input'));
+  toast(`rate ${stepsPerSecond()} steps/s`);
+}
+function applyAnimSpeed() {
+  // manual stepping gets the full animation; during playback it shortens with the rate so the array never lags
+  const ms = state.playing ? Math.max(140, Math.min(650, Math.round(800 / stepsPerSecond()))) : 650;
+  document.documentElement.style.setProperty('--anim-ms', ms + 'ms');
+}
+
 /* ------------------------------------------------------------------ */
 /*  Wiring                                                             */
 /* ------------------------------------------------------------------ */
@@ -764,17 +907,35 @@ function wire() {
   $('#btnStep').addEventListener('click', () => { stopPlayback(); setStep(state.step + 1); });
   $('#btnLast').addEventListener('click', () => { stopPlayback(); setStep(maxStep()); });
   $('#btnPlay').addEventListener('click', () => { if (state.playing) { stopPlayback(); setStatus('IDLE'); } else { if (atEnd()) setStep(0); startPlayback(); } });
-  $('#speed').addEventListener('input', () => { $('#speedOut').textContent = stepsPerSecond() + '/s'; });
+  $('#speed').addEventListener('input', () => { $('#speedOut').textContent = stepsPerSecond() + '/s'; applyAnimSpeed(); });
   $('#speedOut').textContent = stepsPerSecond() + '/s';
+  applyAnimSpeed();
 
   document.addEventListener('keydown', (e) => {
-    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    const inField = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+    const helpOpen = !$('#helpOverlay').hidden;
+    if (e.key === 'Escape') {
+      if (helpOpen) { e.preventDefault(); toggleHelp(false); return; }
+      if (inField) { document.activeElement.blur(); return; }
+    }
+    if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '?' || (e.key === '/' && e.shiftKey)) { e.preventDefault(); toggleHelp(); return; }
+    if (helpOpen) return;
+    const n = e.shiftKey ? 10 : 1;
     if (e.key === ' ') { e.preventDefault(); $('#btnPlay').click(); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); $('#btnStep').click(); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); $('#btnBack').click(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stopPlayback(); setStep(state.step + n); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); stopPlayback(); setStep(state.step - n); }
     else if (e.key === 'Home') { e.preventDefault(); $('#btnFirst').click(); }
     else if (e.key === 'End') { e.preventDefault(); $('#btnLast').click(); }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); nudgeRate(2); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); nudgeRate(-2); }
+    else if (e.key === '/') { e.preventDefault(); $('#probeIn').focus(); $('#probeIn').select(); }
   });
+  $('#btnHelp').addEventListener('click', () => toggleHelp());
+  $('#btnHelpClose').addEventListener('click', () => toggleHelp(false));
+  $('#helpOverlay').addEventListener('click', (e) => { if (e.target === $('#helpOverlay')) toggleHelp(false); });
+  $('#chartOut').addEventListener('mousemove', chartHover);
+  $('#chartOut').addEventListener('mouseleave', hideChartTip);
 
   $('#traceTabs').addEventListener('click', (e) => {
     const b = e.target.closest('.tab'); if (!b) return;
