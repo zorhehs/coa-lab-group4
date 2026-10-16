@@ -32,6 +32,7 @@ const state = {
   sweepView: null,       // what the chart currently shows (for the hover tooltip)
   hiddenSeries: new Set(), // chart series switched off via the legend
   arrayFocus: null,        // set index the detail window is centred on (large caches), null = follow the access
+  sweepSort: null,         // {col, dir} for the results table
   presetCache: {},
 };
 
@@ -396,12 +397,12 @@ function cfgSubset(c) {
 function renderReadoutStrip() {
   const g = geometry();
   const map = g.is_fully_associative ? 'FULL' : (g.ways === 1 ? 'DM' : g.ways + '-WAY');
-  const chips = [
-    ['MAP', map], ['SIZE', fmtBytes(g.cache_size)], ['BLK', g.block_size + ' B'],
-    ['SETS', g.num_sets + '×' + g.ways], ['REPL', g.replacement],
-    ['WR', g.write_policy + (g.write_allocate ? '/WA' : '/NWA')],
-  ];
-  if (g.victim_entries) chips.push(['VC', g.victim_entries]);
+  const parts = [map, fmtBytes(g.cache_size), g.block_size + ' B', g.num_sets + '×' + g.ways, g.replacement, g.write_policy + (g.write_allocate ? '/WA' : '/NWA')];
+  if (g.victim_entries) parts.push('VC ' + g.victim_entries);
+  $('#brandCfg').textContent = parts.join(' · ');
+  const chips = [];
+  if (state.traceName) chips.push(['TRACE', state.traceName], ['ACCESSES', String(state.traceCount || '')]);
+  else chips.push(['TRACE', 'none loaded']);
   $('#readoutStrip').innerHTML = chips.map(([k, v]) => `<span class="chip"><b>${k}</b>${esc(v)}</span>`).join('');
 }
 
@@ -803,13 +804,11 @@ function renderArray() {
 }
 
 /* ---- counters ---- */
-const COUNTER_ITEMS = [
-  ['accesses', 'ACCESSES', ''], ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'],
-  ['reads', 'READS', 'blue'], ['writes', 'WRITES', 'violet'],
-  ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', ''],
-  ['compulsory', 'COMPULSORY', 'amber'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'],
-  ['victim_hits', 'VICTIM HITS', 'blue'], ['writebacks', 'WRITE-BACKS', 'amber'],
-  ['mem_reads', 'MEM READS', ''], ['mem_writes', 'MEM WRITES', ''],
+const COUNTER_GROUPS = [
+  ['ACCESSES', [['accesses', 'TOTAL', ''], ['reads', 'READS', 'blue'], ['writes', 'WRITES', 'violet'],
+                ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'], ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', '']]],
+  ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'amber'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
+  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'amber']]],
 ];
 function renderCounters() {
   const s = currentStats();
@@ -823,8 +822,16 @@ function renderCounters() {
   $('#missBar .cap').style.width = (100 * z('capacity') / m) + '%';
   $('#missBar .conf').style.width = (100 * z('conflict') / m) + '%';
   const n = Math.max(1, z('accesses'));
-  $('#counterGrid').innerHTML = COUNTER_ITEMS.map(([k, l, c]) => `<div class="ctr ${c}" style="--pct:${Math.min(100, 100 * z(k) / n).toFixed(1)}%"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}</span></div>`).join('') +
-    `<div class="ctr"><span class="lbl">MEM TRAFFIC</span><span class="val">${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB</span></div>`;
+  // what the current access changed: compare with the statistics after the previous step
+  const prev = s && !isEndSummary() ? (state.step >= 2 ? state.sim.events[state.step - 2].stats_after : null) : null;
+  const d = (k) => (s && !isEndSummary() ? s[k] - (prev ? prev[k] : 0) : 0);
+  const item = ([k, l, c]) => {
+    const dv = d(k);
+    return `<div class="ctr ${c}" style="--pct:${Math.min(100, 100 * z(k) / n).toFixed(1)}%"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}${dv > 0 ? `<i class="delta">+${dv}</i>` : ''}</span></div>`;
+  };
+  const traffic = `<div class="ctr"><span class="lbl">TRAFFIC</span><span class="val">${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB${prev && s.traffic_bytes > prev.traffic_bytes ? `<i class="delta">+${s.traffic_bytes - prev.traffic_bytes} B</i>` : ''}</span></div>`;
+  $('#counterGrid').innerHTML = COUNTER_GROUPS.map(([title, items], gi) =>
+    `<div class="ctr-group"><h5>${title}</h5><div class="ctr-list">${items.map(item).join('')}${gi === COUNTER_GROUPS.length - 1 ? traffic : ''}</div></div>`).join('');
   $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
   renderSpark();
 }
@@ -1017,6 +1024,7 @@ async function runSweep() {
     });
     state.sweep = { rows: r.rows, param, series, trace: state.traceName, accesses: r.accesses };
     state.hiddenSeries.clear();
+    state.sweepSort = null;
     renderSweep();
     $('#btnExportCsv').disabled = false;
     toast(`sweep done · ${r.rows.length} configurations`);
@@ -1049,15 +1057,36 @@ function renderSweep() {
   }
   series.forEach((s) => { s.hidden = state.hiddenSeries.has(s.name); });
   const title = `${METRIC_LABELS[metric]} vs ${SWEEP_LABELS[sw.param]}${sw.series ? ' · series: ' + SWEEP_LABELS[sw.series] : ''}`;
+  const sweepable = (state.meta && state.meta.sweepable) || {};
+  const xlabel = sw.param === 'trace' ? 'TRACE' : (sweepable[sw.param] || SWEEP_LABELS[sw.param]).toUpperCase();
   state.sweepView = { cats, series, stacked, fmt, metric, metricLabel: METRIC_LABELS[metric], rows: sw.rows, seriesParam: sw.series };
-  $('#chartOut').innerHTML = barChartSVG({ title, subtitle: `trace: ${sw.trace} · ${sw.accesses} accesses · base: ${cliEquivalent().replace('python -m cachesim run ', '')}`, cats, series, stacked, fmt, ylabel });
+  $('#chartOut').innerHTML = barChartSVG({ title, subtitle: `trace: ${sw.trace} · ${sw.accesses} accesses · base: ${cliEquivalent().replace('python -m cachesim run ', '')}`, cats, series, stacked, fmt, ylabel, xlabel });
   hideChartTip();
   // table
   const cols = ['hit_ratio', 'miss_ratio', 'compulsory', 'capacity', 'conflict', 'writebacks', 'mem_reads', 'mem_writes', 'traffic_kib', 'amat'];
-  const head = `<tr><th>SERIES</th><th>${SWEEP_LABELS[sw.param]}</th><th>SETS×WAYS</th>${cols.map((c) => `<th>${c.replace(/_/g, ' ').toUpperCase()}</th>`).join('')}</tr>`;
-  const body = sw.rows.map((r) => {
-    if (r.error) return `<tr><td>${esc(r.series || '—')}</td><td>${esc(r.label)}</td><td class="err" colspan="${cols.length + 1}">${esc(r.error)}</td></tr>`;
-    return `<tr><td>${esc(r.series || '—')}</td><td>${esc(r.label)}</td><td>${r.geometry.num_sets}×${r.geometry.ways}</td>${cols.map((c) => { const v = r.stats[c]; return `<td>${typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(c === 'amat' || c === 'traffic_kib' ? 2 : 4) : v}</td>`; }).join('')}</tr>`;
+  const sortKey = (r, col) => {
+    if (r.error) return null;
+    if (col === 'series') return r.series || '';
+    if (col === 'label') return sw.rows.indexOf(r);              // keeps the sweep order
+    if (col === 'geometry') return r.geometry.num_sets * 1000 + r.geometry.ways;
+    return r.stats[col];
+  };
+  const sort = state.sweepSort;
+  let rowsSorted = sw.rows.slice();
+  if (sort) {
+    rowsSorted.sort((x, y) => {
+      const kx = sortKey(x, sort.col), ky = sortKey(y, sort.col);
+      if (kx === null) return 1; if (ky === null) return -1;
+      const c = typeof kx === 'string' ? kx.localeCompare(ky) : kx - ky;
+      return sort.dir === 'asc' ? c : -c;
+    });
+  }
+  const th = (col, label) => `<th data-col="${col}" class="${sort && sort.col === col ? 'sorted ' + sort.dir : ''}" title="sort by ${label.toLowerCase()}">${label}<i class="sort-ind"></i></th>`;
+  const head = `<tr>${th('series', 'SERIES')}${th('label', SWEEP_LABELS[sw.param])}${th('geometry', 'SETS×WAYS')}${cols.map((c) => th(c, c.replace(/_/g, ' ').toUpperCase())).join('')}</tr>`;
+  const body = rowsSorted.map((r) => {
+    const i = sw.rows.indexOf(r);
+    if (r.error) return `<tr data-i="${i}"><td>${esc(r.series || '—')}</td><td>${esc(r.label)}</td><td class="err" colspan="${cols.length + 1}">${esc(r.error)}</td></tr>`;
+    return `<tr data-i="${i}"><td>${esc(r.series || '—')}</td><td>${esc(r.label)}</td><td>${r.geometry.num_sets}×${r.geometry.ways}</td>${cols.map((c) => { const v = r.stats[c]; return `<td class="${sort && sort.col === c ? 'sorted' : ''}">${typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(c === 'amat' || c === 'traffic_kib' ? 2 : 4) : v}</td>`; }).join('')}</tr>`;
   }).join('');
   $('#sweepTable').innerHTML = `<table>${head}${body}</table>`;
 }
@@ -1108,8 +1137,8 @@ function niceMax(v) {
   for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * base) return m * base;
   return 10 * base;
 }
-function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
-  const W = 820, H = 340, pl = 56, pr = 16, pt = 52, pb = 58;
+function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel, xlabel }) {
+  const W = 820, H = 356, pl = 56, pr = 16, pt = 52, pb = 74;
   const pw = W - pl - pr, ph = H - pt - pb;
   let top;
   const shown = series.filter((s) => !s.hidden);
@@ -1153,6 +1182,7 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel }) {
     o += `<text x="${pl + ci * gw + gw / 2}" y="${pt + ph + 16}" fill="#C9CDD4" text-anchor="middle" font-size="10.5">${esc(c)}</text>`;
   });
   o += `<line x1="${pl}" y1="${pt + ph}" x2="${pl + pw}" y2="${pt + ph}" stroke="#7E8591"/>`;
+  if (xlabel) o += `<text x="${pl + pw / 2}" y="${pt + ph + 34}" fill="#7E8591" font-size="9.5" text-anchor="middle" letter-spacing="1">${esc(xlabel)}</text>`;
   let lx = pl; const ly = H - 16;
   series.forEach((s) => {
     o += `<g class="legend-item${s.hidden ? ' off' : ''}" data-name="${esc(s.name)}"><rect x="${lx - 4}" y="${ly - 9}" width="${13 + 6.5 * s.name.length + 10}" height="18" fill="transparent"/>` +
@@ -1208,7 +1238,7 @@ function chartHover(ev) {
   svg.querySelectorAll('rect.bar').forEach((r) => r.classList.toggle('hot', Number(r.dataset.ci) === ci && (v.stacked || Number(r.dataset.si) === si)));
   const trs = $$('#sweepTable tbody tr, #sweepTable tr');
   trs.forEach((tr) => tr.classList.remove('hot'));
-  if (row) { const idx = v.rows.indexOf(row); const tr = $('#sweepTable table') && $('#sweepTable table').rows[idx + 1]; if (tr) tr.classList.add('hot'); }
+  if (row) { const idx = v.rows.indexOf(row); const tr = $(`#sweepTable tr[data-i="${idx}"]`); if (tr) tr.classList.add('hot'); }
 }
 
 /* ---- help overlay & shortcuts ---- */
@@ -1268,6 +1298,12 @@ function wire() {
   $('#helpOverlay').addEventListener('click', (e) => { if (e.target === $('#helpOverlay')) toggleHelp(false); });
   $('#chartOut').addEventListener('mousemove', chartHover);
   $('#chartOut').addEventListener('mouseleave', hideChartTip);
+  $('#sweepTable').addEventListener('click', (e) => {
+    const th = e.target.closest('th[data-col]'); if (!th || !state.sweep) return;
+    const col = th.dataset.col, cur = state.sweepSort;
+    state.sweepSort = cur && cur.col === col ? (cur.dir === 'desc' ? { col, dir: 'asc' } : null) : { col, dir: 'desc' };
+    renderSweep();
+  });
   $('#chartOut').addEventListener('click', (e) => {
     const it = e.target.closest ? e.target.closest('.legend-item') : null;
     if (!it || !state.sweep) return;
