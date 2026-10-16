@@ -21,11 +21,11 @@
   </div>
   <div class="readout-strip" id="readoutStrip"></div>
   <div class="transport">
-    <button class="tbtn" id="btnFirst" title="Reset to start (Home)">⏮</button>
-    <button class="tbtn" id="btnBack" title="Step back (←)">◀</button>
-    <button class="tbtn tbtn-play" id="btnPlay" title="Play / pause (Space)">▶</button>
-    <button class="tbtn" id="btnStep" title="Step forward (→)">▶▏</button>
-    <button class="tbtn" id="btnLast" title="Run to end (End)">⏭</button>
+    <button class="tbtn" id="btnFirst" title="Reset to start (Home)" aria-label="Reset to start"><svg viewBox="0 0 16 16"><path d="M2 3h2v10H2zM9 3L4.5 8 9 13zM14 3L9.5 8 14 13z"/></svg></button>
+    <button class="tbtn" id="btnBack" title="Step back (←)" aria-label="Step back"><svg viewBox="0 0 16 16"><path d="M11 3L4.5 8 11 13z"/></svg></button>
+    <button class="tbtn tbtn-play" id="btnPlay" title="Play / pause (Space)" aria-label="Play / pause"><svg class="i-play" viewBox="0 0 16 16"><path d="M4 2.5l9 5.5-9 5.5z"/></svg><svg class="i-pause" viewBox="0 0 16 16"><path d="M3.5 3h3.5v10H3.5zM9 3h3.5v10H9z"/></svg></button>
+    <button class="tbtn" id="btnStep" title="Step forward (→)" aria-label="Step forward"><svg viewBox="0 0 16 16"><path d="M4 3l6.5 5L4 13zM11.5 3h2v10h-2z"/></svg></button>
+    <button class="tbtn" id="btnLast" title="Run to end (End)" aria-label="Run to end"><svg viewBox="0 0 16 16"><path d="M2 3l4.5 5L2 13zM7 3l4.5 5L7 13zM12 3h2v10h-2z"/></svg></button>
     <div class="speed">
       <span class="lbl">RATE</span>
       <input type="range" id="speed" min="1" max="40" value="8">

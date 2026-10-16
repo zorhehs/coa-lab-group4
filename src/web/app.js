@@ -336,7 +336,6 @@ function startPlayback() {
   if (!state.sim || atEnd()) return;
   state.playing = true;
   applyAnimSpeed();
-  $('#btnPlay').textContent = '❚❚';
   $('#btnPlay').classList.add('playing');
   setStatus('RUN', 'green');
   const tick = () => {
@@ -351,7 +350,6 @@ function stopPlayback() {
   state.playing = false;
   clearTimeout(state.timer);
   applyAnimSpeed();
-  $('#btnPlay').textContent = '▶';
   $('#btnPlay').classList.remove('playing');
 }
 
