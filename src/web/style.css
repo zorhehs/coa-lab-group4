@@ -290,7 +290,7 @@ code { font-family: var(--mono); }
 /* ---------------------------------------------------------------- */
 /*  Controls: rocker switches, buttons                                */
 /* ---------------------------------------------------------------- */
-.cfg-row { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; margin-bottom: 6px; }
+.cfg-row { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; margin-bottom: 7px; min-height: 30px; }
 .cfg-row .lbl { line-height: 1.1; }
 .seg { display: flex; flex-wrap: wrap; gap: 3px; }
 .seg button {
@@ -349,50 +349,51 @@ code { font-family: var(--mono); }
 
 /* configuration: sections, quick-set, detent sliders, sliding toggles, timing */
 .cfg-section {
-  display: flex; align-items: baseline; gap: 8px; margin: 9px 0 6px; padding-bottom: 3px;
+  display: flex; align-items: baseline; gap: 8px; margin: 12px 0 7px; padding-bottom: 4px;
   border-bottom: 1px solid var(--bezel); font-family: var(--mono); font-size: 9.5px; letter-spacing: .18em; color: var(--muted);
 }
+.cfg-section:first-of-type { margin-top: 10px; }
 .cfg-section em { font-style: normal; font-family: var(--sans); font-size: 10px; letter-spacing: .04em; color: var(--dim); }
 .quick-set { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; }
-.quick-set .seg-ind { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
-.quick-set .seg-ind button { padding: 5px 3px; font-size: 9px; text-align: center; letter-spacing: .02em; }
+.quick-set .seg-ind { grid-auto-flow: row; grid-template-columns: repeat(4, 1fr); }
+.quick-set .seg-ind button { padding: 6px 2px; font-size: 9px; letter-spacing: .02em; }
 
 .detent-row { grid-template-columns: 72px 1fr 66px; }
 .detent { position: relative; height: 32px; padding: 0 4px; user-select: none; touch-action: none; cursor: pointer; outline: none; border-radius: 3px; }
 .detent:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--amber-dim); }
 .detent .track {
-  position: relative; height: 7px; margin: 7px 7px 0; border-radius: 4px;
+  position: relative; height: 6px; margin: 8px 7px 0; border-radius: 3px;
   background: #07080A; border: 1px solid #000;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,.95), 0 1px 0 rgba(255,255,255,.05);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.04);
 }
 .detent .fill {
-  position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 4px;
-  background: var(--amber);
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px;
+  background: var(--amber-dim);
   transition: width var(--t-med) var(--ease-out);
 }
-.detent .tick { position: absolute; top: 50%; width: 2px; height: 11px; margin-left: -1px; transform: translateY(-50%); background: #363a44; border-radius: 1px; transition: background-color var(--t-fast) var(--ease); }
-.detent .tick.on { background: var(--amber-dim); }
+.detent .tick { position: absolute; top: 50%; width: 1px; height: 12px; transform: translateY(-50%); background: #3A3E48; transition: background-color var(--t-fast) var(--ease); }
+.detent .tick.on { background: var(--amber); }
 .detent .knob {
-  position: absolute; top: 50%; width: 15px; height: 15px; margin-left: -7.5px; transform: translateY(-50%); border-radius: 50%; z-index: 1;
-  background: #3A3F49; border: 1px solid #0B0C0E;
-  box-shadow: 0 1px 3px rgba(0,0,0,.6);
+  position: absolute; top: 50%; width: 11px; height: 19px; margin-left: -5.5px; transform: translateY(-50%); border-radius: 2px; z-index: 1;
+  background: var(--key-hi); border: 1px solid #0B0C0E; border-bottom-color: #000;
+  box-shadow: 0 1px 2px rgba(0,0,0,.7);
   transition: left var(--t-med) var(--ease-out), box-shadow var(--t-fast) var(--ease);
 }
 .detent.dragging .knob, .detent.dragging .fill { transition: none; }
-.detent .knob::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: var(--amber); }
-.detent:hover .knob, .detent:focus-visible .knob { box-shadow: 0 1px 3px rgba(0,0,0,.6), 0 0 0 4px rgba(var(--amber-rgb),.12); }
-.detent .scale { position: relative; height: 11px; margin: 4px 7px 0; font-family: var(--mono); font-size: 8.5px; color: var(--dim); }
+.detent .knob::after { content: ""; position: absolute; left: 50%; top: 3px; bottom: 3px; width: 1px; margin-left: -.5px; background: var(--amber); }
+.detent:hover .knob, .detent:focus-visible .knob { background: #3C4149; box-shadow: 0 1px 2px rgba(0,0,0,.7), 0 0 0 3px rgba(var(--amber-rgb),.12); }
+.detent .scale { position: relative; height: 11px; margin: 5px 7px 0; font-family: var(--mono); font-size: 8.5px; color: var(--dim); }
 .detent .scale span { position: absolute; transform: translateX(-50%); white-space: nowrap; transition: color var(--t-fast) var(--ease); }
 .detent .scale span.minor { display: none; }
 .detent .scale span.active { color: var(--amber); }
-.readout { text-align: center; font-size: 10.5px; padding: 0 4px; height: 26px; line-height: 24px; }
+.readout { text-align: center; font-size: 10.5px; padding: 0 4px; height: 28px; line-height: 26px; }
 
 .seg-ind {
-  position: relative; display: inline-flex; flex-wrap: wrap; gap: 0; padding: 2px; border-radius: 3px;
+  position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0; padding: 2px; border-radius: 3px; width: 100%;
   background: #0B0C0F; border: 1px solid #000;
   box-shadow: inset 0 1px 3px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.04);
 }
-.seg-ind button { position: relative; z-index: 1; background: transparent; border: 1px solid transparent; box-shadow: none; padding: 4px 9px; color: var(--muted); border-radius: 2px; }
+.seg-ind button { position: relative; z-index: 1; min-width: 0; background: transparent; border: 1px solid transparent; box-shadow: none; padding: 5px 6px; color: var(--muted); border-radius: 2px; text-align: center; letter-spacing: .06em; }
 .seg-ind button:hover { color: var(--text); background: rgba(255,255,255,.03); border-color: transparent; }
 .seg-ind button:active { transform: none; }
 .seg-ind button.active { color: var(--amber-hi); background: transparent; border-color: transparent; box-shadow: none; }
@@ -406,9 +407,11 @@ code { font-family: var(--mono); }
 .seg-ind.green .ind { background: #1A251D; border-color: #2E4A33; box-shadow: inset 0 -2px 0 var(--green); }
 
 .timing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.timing-grid .num-in { height: 26px; }
 .timing-grid label { display: flex; flex-direction: column; gap: 4px; }
-.timing-grid .num-in { width: 100%; text-align: right; }
+.timing-grid .num-in { width: 100%; height: 28px; text-align: right; }
+.num-wrap { position: relative; display: block; }
+.num-wrap .unit { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); font-style: normal; font-family: var(--mono); font-size: 8.5px; letter-spacing: .1em; color: var(--dim); pointer-events: none; }
+.num-wrap.has-unit .num-in { padding-right: 30px; }
 
 /* ---------------------------------------------------------------- */
 /*  Geometry                                                          */

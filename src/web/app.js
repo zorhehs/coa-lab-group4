@@ -179,9 +179,9 @@ function buildConfigControls() {
   const timing = document.createElement('div');
   timing.className = 'timing-grid';
   timing.innerHTML = `
-      <label><span class="lbl">HIT TIME</span><input class="num-in" id="hitTime" type="number" step="0.5" min="0"></label>
-      <label><span class="lbl">MISS PENALTY</span><input class="num-in" id="missPenalty" type="number" step="1" min="0"></label>
-      <label><span class="lbl">RNG SEED</span><input class="num-in" id="seed" type="number" step="1" min="0"></label>`;
+      <label><span class="lbl">HIT TIME</span><span class="num-wrap has-unit"><input class="num-in" id="hitTime" type="number" step="0.5" min="0"><i class="unit">cyc</i></span></label>
+      <label><span class="lbl">MISS PENALTY</span><span class="num-wrap has-unit"><input class="num-in" id="missPenalty" type="number" step="1" min="0"><i class="unit">cyc</i></span></label>
+      <label><span class="lbl">RNG SEED</span><span class="num-wrap"><input class="num-in" id="seed" type="number" step="1" min="0"></span></label>`;
   body.appendChild(timing);
   for (const [id, key] of [['#hitTime', 'hit_time'], ['#missPenalty', 'miss_penalty'], ['#seed', 'seed']]) {
     $(id).addEventListener('change', (e) => { state.config[key] = Number(e.target.value); scheduleSimulate(); });
