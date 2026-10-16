@@ -9,18 +9,19 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence
 from xml.sax.saxutils import escape
 
-BG = "#141518"
-PANEL = "#1C1E23"
-GRID = "#2A2D34"
-TEXT = "#C9CDD4"
-MUTED = "#7E8591"
-AMBER = "#F5B942"
-GREEN = "#58D68D"
-RED = "#E8584F"
-BLUE = "#5DADE2"
-VIOLET = "#B388EB"
-SERIES_COLORS = [AMBER, GREEN, BLUE, RED, VIOLET, "#F1948A", "#76D7C4"]
-FONT = "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace"
+# same tokens as src/web/style.css so figures match the GUI
+BG = "#111216"
+PANEL = "#181A1E"
+GRID = "#2C3037"
+TEXT = "#D3D6DC"
+MUTED = "#868C97"
+AMBER = "#62CFC9"          # the accent (cyan since the fourth GUI revision; name kept for callers)
+GREEN = "#8FCB7A"
+RED = "#E06558"
+BLUE = "#6A9BE0"
+VIOLET = "#A796DB"
+SERIES_COLORS = [AMBER, GREEN, BLUE, RED, VIOLET, "#E29A8E", "#78C8B6"]
+FONT = "'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace"
 
 
 def _nice_max(v: float) -> float:

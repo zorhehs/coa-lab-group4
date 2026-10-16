@@ -136,8 +136,12 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
 
-    def log_message(self, fmt, *args):  # quieter log
-        if "/api/" in (args[0] if args else ""):
+    def log_message(self, fmt, *args):  # quieter log: skip the API chatter, keep everything else
+        try:
+            line = fmt % args if args else fmt
+        except (TypeError, ValueError):
+            line = str(fmt)
+        if "/api/" in line and " 200 " in line:
             return
         super().log_message(fmt, *args)
 
