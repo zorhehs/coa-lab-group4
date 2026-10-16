@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23181A1E'/%3E%3Crect x='2' y='4' width='12' height='3' fill='%23E2AD4C'/%3E%3Crect x='2' y='9' width='7' height='3' fill='%2386C98B'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23181A1E'/%3E%3Crect x='2' y='4' width='12' height='3' fill='%2362CFC9'/%3E%3Crect x='2' y='9' width='7' height='3' fill='%238FCB7A'/%3E%3C/svg%3E">
 </head>
 <body>
 
@@ -89,13 +89,13 @@
         <div class="tab-pane" data-pane="generate" hidden>
           <div class="seg" id="genKinds"></div>
           <div class="gen-form" id="genForm"></div>
-          <div class="row-right"><button class="btn btn-amber" id="btnGenerate">GENERATE &amp; LOAD</button></div>
+          <div class="row-right"><button class="btn btn-accent" id="btnGenerate">GENERATE &amp; LOAD</button></div>
         </div>
         <div class="tab-pane" data-pane="paste" hidden>
           <textarea id="pasteArea" spellcheck="false" placeholder="# one access per line&#10;R 0x1A3C&#10;W 0x1A40&#10;0 1A44      (dinero)&#10;L 04010000,4 (valgrind lackey)"></textarea>
           <div class="row-between">
             <label class="btn btn-ghost file-btn">OPEN FILE <input type="file" id="fileInput" accept=".trace,.txt,.din,.out,.csv,*/*"></label>
-            <button class="btn btn-amber" id="btnLoadPaste">LOAD</button>
+            <button class="btn btn-accent" id="btnLoadPaste">LOAD</button>
           </div>
         </div>
       </div>
@@ -170,7 +170,7 @@
           <div class="ctl"><span class="lbl">SERIES</span><div class="seg" id="sweepSeries"></div></div>
           <div class="ctl"><span class="lbl">METRIC</span><div class="seg" id="sweepMetric"></div></div>
           <div class="ctl ctl-btns">
-            <button class="btn btn-amber" id="btnSweep">RUN SWEEP</button>
+            <button class="btn btn-accent" id="btnSweep">RUN SWEEP</button>
             <button class="btn btn-ghost" id="btnCompareTraces" title="Run the current configuration on every preset trace">COMPARE TRACES</button>
           </div>
         </div>

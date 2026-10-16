@@ -63,8 +63,8 @@ let themeCache = null;
 function theme() {
   if (!themeCache) {
     const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-    themeCache = { amber: v('--amber'), green: v('--green'), red: v('--red'), blue: v('--blue'), violet: v('--violet'),
-      amberRgb: v('--amber-rgb'), greenRgb: v('--green-rgb'), lcd: v('--lcd'), text: v('--text'), muted: v('--muted'), dim: v('--dim'), hair: v('--hair-2') };
+    themeCache = { accent: v('--accent'), green: v('--green'), red: v('--red'), blue: v('--blue'), violet: v('--violet'),
+      accentRgb: v('--accent-rgb'), greenRgb: v('--green-rgb'), lcd: v('--lcd'), text: v('--text'), muted: v('--muted'), dim: v('--dim'), hair: v('--hair-2') };
   }
   return themeCache;
 }
@@ -262,7 +262,7 @@ async function simulate(opts) {
   opts = opts || {};
   if (!state.traceText.trim()) { renderGeometryOnly(); return; }
   stopPlayback();
-  setStatus('BUSY', 'amber');
+  setStatus('BUSY', 'accent');
   try {
     const res = await api('/api/simulate', { config: state.config, trace: state.traceText, event_limit: state.meta.event_limit });
     state.sim = res;
@@ -274,7 +274,7 @@ async function simulate(opts) {
     else state.step = Math.min(state.step, max);
     rebuildGrid();
     renderAll();
-    setStatus(state.step >= max && max > 0 ? 'END' : 'IDLE', state.step >= max && max > 0 ? 'amber' : null);
+    setStatus(state.step >= max && max > 0 ? 'END' : 'IDLE', state.step >= max && max > 0 ? 'accent' : null);
   } catch (e) {
     $('#configError').textContent = e.message;
     $('#configError').hidden = false;
@@ -338,7 +338,7 @@ function setStep(n, fromPlay) {
   state.step = n;
   rebuildGrid();
   renderAll();
-  if (!state.playing) setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
+  if (!state.playing) setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'accent' : null);
 }
 
 /* ---- playback ---- */
@@ -352,7 +352,7 @@ function startPlayback() {
   const tick = () => {
     if (!state.playing) return;
     setStep(state.step + 1, true);
-    if (atEnd()) { stopPlayback(); setStatus('END', 'amber'); return; }
+    if (atEnd()) { stopPlayback(); setStatus('END', 'accent'); return; }
     state.timer = setTimeout(tick, 1000 / stepsPerSecond());
   };
   tick();
@@ -559,7 +559,7 @@ function renderBus(e, pulse) {
   };
   set('#ledMemR', !!(e && e.mem_read), 'blue');
   set('#ledMemW', !!(e && e.mem_write), 'violet');
-  set('#ledWb', !!(e && e.writeback), 'amber');
+  set('#ledWb', !!(e && e.writeback), 'accent');
   set('#ledVc', !!(e && e.result === 'VICTIM'), 'blue');
   let note = 'memory bus idle';
   if (e) {
@@ -705,7 +705,7 @@ function renderSpark() {
   line(0, done, theme().green, 1.5);
   if (done > 0) {
     const cx = X(done - 1), cy = Y(pts[done - 1]);
-    ctx.fillStyle = theme().amber; ctx.shadowColor = `rgba(${theme().amberRgb},.8)`; ctx.shadowBlur = 6;
+    ctx.fillStyle = theme().accent; ctx.shadowColor = `rgba(${theme().accentRgb},.8)`; ctx.shadowBlur = 6;
     ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
   }
   val.textContent = done > 0 ? pts[done - 1].toFixed(3) : '—';
@@ -817,8 +817,8 @@ function renderArray() {
 const COUNTER_GROUPS = [
   ['ACCESSES', [['accesses', 'TOTAL', ''], ['reads', 'READS', 'blue'], ['writes', 'WRITES', 'violet'],
                 ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'], ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', '']]],
-  ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'amber'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
-  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'amber']]],
+  ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'accent'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
+  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'accent']]],
 ];
 function renderCounters() {
   const s = currentStats();
@@ -1022,7 +1022,7 @@ const METRIC_LABELS = {
   hit_ratio: 'HIT RATIO', miss_ratio: 'MISS RATIO', amat: 'AMAT', misstypes: 'MISS TYPES',
   traffic_kib: 'TRAFFIC', writebacks: 'WRITE-BACKS', mem_reads: 'MEM READS', mem_writes: 'MEM WRITES',
 };
-const seriesColors = () => [theme().amber, theme().green, theme().blue, theme().red, theme().violet, '#E29A8E', '#78C8B6'];
+const seriesColors = () => [theme().accent, theme().green, theme().blue, theme().red, theme().violet, '#E29A8E', '#78C8B6'];
 
 function buildExperimentControls() {
   const mk = (el, items, cur, onpick) => {
@@ -1042,7 +1042,7 @@ async function runSweep() {
   const param = state.sweepParam;
   let series = state.sweepSeries;
   if (series === param) series = '';
-  setStatus('SWEEP', 'amber');
+  setStatus('SWEEP', 'accent');
   $('#btnSweep').disabled = true;
   try {
     const r = await api('/api/sweep', {
@@ -1057,7 +1057,7 @@ async function runSweep() {
     toast(`sweep done · ${r.rows.length} configurations`);
   } catch (e) { toast(e.message, true); }
   $('#btnSweep').disabled = false;
-  setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
+  setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'accent' : null);
 }
 
 function renderSweep() {
@@ -1070,7 +1070,7 @@ function renderSweep() {
     stacked = true; fmt = (v) => String(Math.round(v));
     const useSeries = seriesNames.length > 1 ? seriesNames[0] : '';
     series = ['compulsory', 'capacity', 'conflict'].map((k, i) => ({
-      name: k.toUpperCase(), color: [theme().amber, theme().violet, theme().red][i],
+      name: k.toUpperCase(), color: [theme().accent, theme().violet, theme().red][i],
       values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === useSeries); return r && r.stats ? r.stats[k] : null; }),
     }));
     ylabel = 'MISSES' + (useSeries ? ' · ' + useSeries : '');
@@ -1121,7 +1121,7 @@ function renderSweep() {
 async function compareTraces() {
   const names = $$('.preset').map((b) => b.dataset.name);
   if (!names.length) { toast('no preset traces', true); return; }
-  setStatus('SWEEP', 'amber');
+  setStatus('SWEEP', 'accent');
   $('#btnCompareTraces').disabled = true;
   try {
     const rows = [];
@@ -1137,7 +1137,7 @@ async function compareTraces() {
     $('#btnExportCsv').disabled = false;
   } catch (e) { toast(e.message, true); }
   $('#btnCompareTraces').disabled = false;
-  setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'amber' : null);
+  setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'accent' : null);
 }
 
 function exportCsv() {
@@ -1174,7 +1174,7 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel, xlab
   const y = (v) => pt + ph - ph * Math.min(v, top) / top;
   let o = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, Menlo, monospace" font-size="11">`;
   const T = theme();
-  o += `<text x="${pl}" y="22" fill="${T.amber}" font-size="12" letter-spacing="1">${esc(title.toUpperCase())}</text>`;
+  o += `<text x="${pl}" y="22" fill="${T.accent}" font-size="12" letter-spacing="1">${esc(title.toUpperCase())}</text>`;
   o += `<text x="${pl}" y="38" fill="${T.muted}" font-size="9.5">${esc(subtitle)}</text>`;
   for (let i = 0; i <= 5; i++) {
     const yy = pt + ph - ph * i / 5, val = top * i / 5;

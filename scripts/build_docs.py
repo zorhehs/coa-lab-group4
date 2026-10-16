@@ -29,8 +29,8 @@ RESULTS = ROOT / "results"
 
 # GUI colour tokens (src/web/style.css) so the documents match the instrument theme
 C = dict(bg="111216", panel="181A1E", panel2="141619", panel3="1E2126", bezel="24272D", bezel_hi="2C3037",
-         text="D3D6DC", muted="868C97", dim="5A5F69", amber="E2AD4C", amber_dim="8A6B2C", green="86C98B",
-         red="E06558", blue="62B3DA", violet="A796DB", lcd="0A0B0D", white="F1F2F4")
+         text="D3D6DC", muted="868C97", dim="5A5F69", amber="62CFC9", amber_dim="2F6B68", green="8FCB7A",
+         red="E06558", blue="6A9BE0", violet="A796DB", lcd="0A0B0D", white="F1F2F4")
 
 FOOTER = "COA Lab P07 · Configurable Cache Memory Simulator · Group 04 (Aliyan Zulfiqar, Shehroz Riaz)"
 
