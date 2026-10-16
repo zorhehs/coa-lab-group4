@@ -138,10 +138,11 @@ function buildConfigControls() {
       };
       const fromEvent = (ev) => { const r = d.querySelector('.track').getBoundingClientRect(); return Math.round((ev.clientX - r.left) / r.width * (n - 1)); };
       let drag = false;
-      d.addEventListener('pointerdown', (ev) => { drag = true; d.setPointerCapture(ev.pointerId); pick(fromEvent(ev)); d.focus(); });
+      // while the pointer is down the knob follows it directly (no easing); the easing is for keyboard / preset changes
+      d.addEventListener('pointerdown', (ev) => { drag = true; d.setPointerCapture(ev.pointerId); pick(fromEvent(ev)); d.classList.add('dragging'); d.focus(); });
       d.addEventListener('pointermove', (ev) => { if (drag) pick(fromEvent(ev)); });
-      d.addEventListener('pointerup', () => { drag = false; });
-      d.addEventListener('pointercancel', () => { drag = false; });
+      d.addEventListener('pointerup', () => { drag = false; d.classList.remove('dragging'); });
+      d.addEventListener('pointercancel', () => { drag = false; d.classList.remove('dragging'); });
       d.addEventListener('keydown', (ev) => {
         const i = c.opts.findIndex(([v]) => v === state.config[c.key]);
         if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') pick(i + 1);
@@ -825,13 +826,30 @@ function renderCounters() {
   // what the current access changed: compare with the statistics after the previous step
   const prev = s && !isEndSummary() ? (state.step >= 2 ? state.sim.events[state.step - 2].stats_after : null) : null;
   const d = (k) => (s && !isEndSummary() ? s[k] - (prev ? prev[k] : 0) : 0);
-  const item = ([k, l, c]) => {
-    const dv = d(k);
-    return `<div class="ctr ${c}" style="--pct:${Math.min(100, 100 * z(k) / n).toFixed(1)}%"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}${dv > 0 ? `<i class="delta">+${dv}</i>` : ''}</span></div>`;
+  // build the grid once, then patch values in place so the meters slide instead of being redrawn every step
+  const grid = $('#counterGrid');
+  if (!grid.firstChild) {
+    const item = ([k, l, c]) => `<div class="ctr ${c}" data-k="${k}"><span class="lbl">${l}</span><span class="val ${c}"><span class="n">0</span></span></div>`;
+    const traffic = `<div class="ctr" data-k="traffic"><span class="lbl">TRAFFIC</span><span class="val"><span class="n">0.00 KiB</span></span></div>`;
+    grid.innerHTML = COUNTER_GROUPS.map(([title, items], gi) =>
+      `<div class="ctr-group"><h5>${title}</h5><div class="ctr-list">${items.map(item).join('')}${gi === COUNTER_GROUPS.length - 1 ? traffic : ''}</div></div>`).join('');
+  }
+  const setCtr = (el, text, pct, delta) => {
+    const num = el.querySelector('.n');
+    if (num.textContent !== text) num.textContent = text;
+    el.style.setProperty('--pct', pct.toFixed(1) + '%');
+    const old = el.querySelector('.delta');
+    if (old) old.remove();
+    if (delta) { const i = document.createElement('i'); i.className = 'delta'; i.textContent = delta; el.querySelector('.val').appendChild(i); }
   };
-  const traffic = `<div class="ctr"><span class="lbl">TRAFFIC</span><span class="val">${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB${prev && s.traffic_bytes > prev.traffic_bytes ? `<i class="delta">+${s.traffic_bytes - prev.traffic_bytes} B</i>` : ''}</span></div>`;
-  $('#counterGrid').innerHTML = COUNTER_GROUPS.map(([title, items], gi) =>
-    `<div class="ctr-group"><h5>${title}</h5><div class="ctr-list">${items.map(item).join('')}${gi === COUNTER_GROUPS.length - 1 ? traffic : ''}</div></div>`).join('');
+  for (const [, items] of COUNTER_GROUPS) {
+    for (const [k] of items) {
+      const dv = d(k);
+      setCtr(grid.querySelector(`.ctr[data-k="${k}"]`), String(z(k)), Math.min(100, 100 * z(k) / n), dv > 0 ? `+${dv}` : '');
+    }
+  }
+  setCtr(grid.querySelector('.ctr[data-k="traffic"]'), `${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB`, 0,
+    prev && s.traffic_bytes > prev.traffic_bytes ? `+${s.traffic_bytes - prev.traffic_bytes} B` : '');
   $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
   renderSpark();
 }
