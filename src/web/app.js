@@ -712,10 +712,13 @@ function renderArray() {
       cell.classList.toggle('hitcell', touched && resultCls === 'hitcell');
       cell.classList.toggle('misscell', touched && resultCls === 'misscell');
       cell.classList.toggle('victimcell', touched && resultCls === 'victimcell');
-      const ev = touched && e.evicted ? 'evict ' + hex(e.evicted.tag) + (e.evicted.dirty ? ' (dirty)' : '') : null;
-      cell.classList.toggle('evicted-from', !!ev);
-      if (ev) cell.dataset.ev = ev; else delete cell.dataset.ev;
     });
+    let note = row.querySelector('.row-note');
+    const evText = isCur && e && e.evicted ? `evicted ${hex(e.evicted.tag)}${e.evicted.dirty ? ' (dirty' + (e.evicted.writeback ? ', written back' : (e.evicted.to_victim ? ', to victim cache' : '')) + ')' : (e.evicted.to_victim ? ' (to victim cache)' : '')}` : '';
+    if (evText) {
+      if (!note) { note = document.createElement('span'); note.className = 'row-note'; row.appendChild(note); }
+      note.textContent = '← ' + evText;
+    } else if (note) note.remove();
     if (isCur && forward) {
       if (e.way === null || e.way === undefined) {
         restartAnimation(row, 'anim-miss', ['anim-miss']);      // nothing allocated (no-write-allocate)
@@ -799,6 +802,7 @@ function renderLog() {
     if (state.sim.truncated) rows.push(`<div class="log-more">… ${state.traceCount - evs.length} more accesses (step to END for totals)</div>`);
     out.innerHTML = rows.join('');
     $('#logSub').textContent = `${state.traceCount} accesses${state.sim.truncated ? ` · first ${evs.length} steppable` : ''}`;
+    applyLogFilter();
   }
   const rows = out.children;
   for (let i = 0; i < evs.length; i++) {
@@ -811,6 +815,11 @@ function renderLog() {
   const cur = out.querySelector('.log-row.current');
   if (cur) revealIn(out, cur, !(state.playing && stepsPerSecond() > 10));
   else if (state.step === 0) out.scrollTop = 0;
+}
+
+function applyLogFilter() {
+  const q = ($('#logFilter').value || '').trim().toLowerCase();
+  $$('#logOut .log-row').forEach((r) => { r.hidden = !!q && !r.textContent.toLowerCase().includes(q); });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1272,6 +1281,7 @@ function wire() {
   $('#btnCompareTraces').addEventListener('click', compareTraces);
   $('#btnExportCsv').addEventListener('click', exportCsv);
   $('#sweepMetric').addEventListener('click', () => { if (state.sweep) renderSweep(); });
+  $('#logFilter').addEventListener('input', applyLogFilter);
   $('#logOut').addEventListener('click', (e) => { const r = e.target.closest('.log-row'); if (r) { stopPlayback(); setStep(Number(r.dataset.i)); } });
 }
 
