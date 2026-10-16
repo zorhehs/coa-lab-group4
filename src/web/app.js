@@ -67,57 +67,157 @@ function setStatus(txt, led) {
 /*  Configuration controls                                             */
 /* ------------------------------------------------------------------ */
 const SIZE_OPTS = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768].map((v) => [v, v >= 1024 ? (v / 1024) + 'K' : String(v)]);
+const fmtSize = (v) => (v >= 1024 ? (v / 1024) + ' KiB' : v + ' B');
 const CONTROLS = [
-  { key: 'cache_size', label: 'CACHE SIZE', opts: SIZE_OPTS },
-  { key: 'block_size', label: 'BLOCK SIZE', opts: [4, 8, 16, 32, 64, 128].map((v) => [v, v + ' B']) },
-  { key: 'associativity', label: 'MAPPING', opts: [[1, 'DM'], [2, '2-WAY'], [4, '4-WAY'], [8, '8-WAY'], [16, '16-WAY'], [0, 'FULL']] },
-  { key: 'replacement', label: 'REPLACE', opts: [['LRU', 'LRU'], ['FIFO', 'FIFO'], ['RANDOM', 'RANDOM']] },
-  { key: 'write_policy', label: 'WRITE', opts: [['WB', 'WRITE-BACK'], ['WT', 'WRITE-THRU']] },
-  { key: 'write_allocate', label: 'ON W-MISS', opts: [[true, 'ALLOCATE'], [false, 'NO-ALLOC']] },
-  { key: 'address_bits', label: 'ADDR BITS', opts: [[16, '16'], [24, '24'], [32, '32']] },
-  { key: 'victim_entries', label: 'VICTIM $', opts: [[0, 'OFF'], [2, '2'], [4, '4'], [8, '8']], green: true },
+  { section: 'GEOMETRY', sub: 'size · line · placement' },
+  { key: 'cache_size', label: 'CACHE SIZE', kind: 'detent', opts: SIZE_OPTS, readout: fmtSize },
+  { key: 'block_size', label: 'BLOCK SIZE', kind: 'detent', opts: [4, 8, 16, 32, 64, 128].map((v) => [v, String(v)]), readout: (v) => v + ' B' },
+  { key: 'associativity', label: 'MAPPING', kind: 'detent', opts: [[1, 'DM'], [2, '2'], [4, '4'], [8, '8'], [16, '16'], [0, 'FA']],
+    readout: (v) => (v === 0 ? 'FULL' : (v === 1 ? 'DIRECT' : v + '-WAY')) },
+  { section: 'POLICIES', sub: 'replacement · write' },
+  { key: 'replacement', label: 'REPLACE', kind: 'seg', opts: [['LRU', 'LRU'], ['FIFO', 'FIFO'], ['RANDOM', 'RANDOM']] },
+  { key: 'write_policy', label: 'WRITE', kind: 'seg', opts: [['WB', 'WRITE-BACK'], ['WT', 'WRITE-THRU']] },
+  { key: 'write_allocate', label: 'ON W-MISS', kind: 'seg', opts: [[true, 'ALLOCATE'], [false, 'NO-ALLOC']] },
+  { section: 'ADDRESS · EXTENSIONS', sub: '' },
+  { key: 'address_bits', label: 'ADDR BITS', kind: 'seg', opts: [[16, '16'], [24, '24'], [32, '32']] },
+  { key: 'victim_entries', label: 'VICTIM $', kind: 'seg', opts: [[0, 'OFF'], [2, '2'], [4, '4'], [8, '8']], green: true },
 ];
+const QUICK_SETS = [
+  ['TEXTBOOK', { cache_size: 32, block_size: 4, associativity: 1, replacement: 'LRU', write_policy: 'WB', write_allocate: true, victim_entries: 0 }, 'Hennessy & Patterson: 8 one-word blocks, direct mapped'],
+  ['REFERENCE', { cache_size: 1024, block_size: 16, associativity: 4, replacement: 'LRU', write_policy: 'WB', write_allocate: true, victim_entries: 0 }, '1 KiB · 16 B · 4-way LRU · write-back / write-allocate'],
+  ['L1-LIKE', { cache_size: 32768, block_size: 64, associativity: 8, replacement: 'LRU', write_policy: 'WB', write_allocate: true, victim_entries: 0 }, '32 KiB · 64 B · 8-way, like a real L1 data cache'],
+  ['THRASH', { cache_size: 1024, block_size: 16, associativity: 1, replacement: 'LRU', write_policy: 'WB', write_allocate: true, victim_entries: 0 }, '1 KiB direct mapped: load conflict.trace, then try VICTIM $ = 2'],
+];
+
+function positionIndicator(seg) {
+  const ind = seg.querySelector('.ind');
+  if (!ind) return;
+  const a = seg.querySelector('button.active');
+  if (!a) { ind.style.opacity = 0; return; }
+  ind.style.opacity = 1;
+  ind.style.left = a.offsetLeft + 'px'; ind.style.top = a.offsetTop + 'px';
+  ind.style.width = a.offsetWidth + 'px'; ind.style.height = a.offsetHeight + 'px';
+}
 
 function buildConfigControls() {
   const body = $('#configBody');
   body.innerHTML = '';
+  // quick-set: whole configurations in one click
+  const qs = document.createElement('div');
+  qs.className = 'quick-set';
+  qs.innerHTML = `<span class="lbl">QUICK SET</span><div class="seg seg-ind" id="quickSeg">${QUICK_SETS.map(([n, , d], i) => `<button data-i="${i}" title="${esc(d)}">${n}</button>`).join('')}<i class="ind"></i></div>`;
+  body.appendChild(qs);
+  qs.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    const [name, cfg, desc] = QUICK_SETS[Number(b.dataset.i)];
+    Object.assign(state.config, cfg); syncConfigUI(); scheduleSimulate(); toast(`${name} · ${desc}`);
+  }));
   for (const c of CONTROLS) {
-    const row = document.createElement('div');
-    row.className = 'cfg-row';
-    const seg = document.createElement('div');
-    seg.className = 'seg' + (c.green ? ' green' : '');
-    seg.dataset.key = c.key;
-    for (const [v, lbl] of c.opts) {
-      const b = document.createElement('button');
-      b.textContent = lbl;
-      b.dataset.value = JSON.stringify(v);
-      b.addEventListener('click', () => { state.config[c.key] = v; syncConfigUI(); scheduleSimulate(); });
-      seg.appendChild(b);
+    if (c.section) {
+      const h = document.createElement('div');
+      h.className = 'cfg-section';
+      h.innerHTML = `<span>${c.section}</span>${c.sub ? `<em>${c.sub}</em>` : ''}`;
+      body.appendChild(h);
+      continue;
     }
+    const row = document.createElement('div');
+    row.className = 'cfg-row' + (c.kind === 'detent' ? ' detent-row' : '');
     row.innerHTML = `<span class="lbl">${c.label}</span>`;
-    row.appendChild(seg);
+    if (c.kind === 'detent') {
+      const n = c.opts.length;
+      const d = document.createElement('div');
+      d.className = 'detent'; d.dataset.key = c.key; d.tabIndex = 0;
+      d.setAttribute('role', 'slider'); d.setAttribute('aria-label', c.label);
+      d.innerHTML = `<div class="track">${c.opts.map((_, i) => `<i class="tick" style="left:${100 * i / (n - 1)}%"></i>`).join('')}<div class="fill"></div><div class="knob"></div></div>` +
+        `<div class="scale">${c.opts.map(([, l], i) => `<span style="left:${100 * i / (n - 1)}%" class="${n > 7 && i % 2 === 1 && i !== n - 1 ? 'minor' : ''}">${l}</span>`).join('')}</div>`;
+      const pick = (i) => {
+        i = Math.max(0, Math.min(n - 1, i));
+        const v = c.opts[i][0];
+        if (state.config[c.key] !== v) { state.config[c.key] = v; syncConfigUI(); scheduleSimulate(); }
+      };
+      const fromEvent = (ev) => { const r = d.querySelector('.track').getBoundingClientRect(); return Math.round((ev.clientX - r.left) / r.width * (n - 1)); };
+      let drag = false;
+      d.addEventListener('pointerdown', (ev) => { drag = true; d.setPointerCapture(ev.pointerId); pick(fromEvent(ev)); d.focus(); });
+      d.addEventListener('pointermove', (ev) => { if (drag) pick(fromEvent(ev)); });
+      d.addEventListener('pointerup', () => { drag = false; });
+      d.addEventListener('pointercancel', () => { drag = false; });
+      d.addEventListener('keydown', (ev) => {
+        const i = c.opts.findIndex(([v]) => v === state.config[c.key]);
+        if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') pick(i + 1);
+        else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') pick(i - 1);
+        else if (ev.key === 'Home') pick(0);
+        else if (ev.key === 'End') pick(n - 1);
+        else return;
+        ev.preventDefault(); ev.stopPropagation();
+      });
+      row.appendChild(d);
+      const ro = document.createElement('span');
+      ro.className = 'lcd lcd-sm readout'; ro.dataset.key = c.key;
+      row.appendChild(ro);
+    } else {
+      const seg = document.createElement('div');
+      seg.className = 'seg seg-ind' + (c.green ? ' green' : '');
+      seg.dataset.key = c.key;
+      for (const [v, lbl] of c.opts) {
+        const b = document.createElement('button');
+        b.textContent = lbl;
+        b.dataset.value = JSON.stringify(v);
+        b.addEventListener('click', () => { state.config[c.key] = v; syncConfigUI(); scheduleSimulate(); });
+        seg.appendChild(b);
+      }
+      const ind = document.createElement('i'); ind.className = 'ind'; seg.appendChild(ind);
+      row.appendChild(seg);
+    }
     body.appendChild(row);
   }
+  const th = document.createElement('div');
+  th.className = 'cfg-section';
+  th.innerHTML = '<span>TIMING</span><em>cycles, for AMAT · seed for RANDOM</em>';
+  body.appendChild(th);
   const timing = document.createElement('div');
-  timing.className = 'cfg-row';
-  timing.innerHTML = `<span class="lbl">TIMING</span>
-    <div class="num-row">
-      <label><span class="lbl">HIT</span><input class="num-in" id="hitTime" type="number" step="0.5" min="0"></label>
-      <label><span class="lbl">PENALTY</span><input class="num-in" id="missPenalty" type="number" step="1" min="0"></label>
-      <label><span class="lbl">SEED</span><input class="num-in" id="seed" type="number" step="1" min="0"></label>
-    </div>`;
+  timing.className = 'timing-grid';
+  timing.innerHTML = `
+      <label><span class="lbl">HIT TIME</span><input class="num-in" id="hitTime" type="number" step="0.5" min="0"></label>
+      <label><span class="lbl">MISS PENALTY</span><input class="num-in" id="missPenalty" type="number" step="1" min="0"></label>
+      <label><span class="lbl">RNG SEED</span><input class="num-in" id="seed" type="number" step="1" min="0"></label>`;
   body.appendChild(timing);
   for (const [id, key] of [['#hitTime', 'hit_time'], ['#missPenalty', 'miss_penalty'], ['#seed', 'seed']]) {
     $(id).addEventListener('change', (e) => { state.config[key] = Number(e.target.value); scheduleSimulate(); });
   }
+  new ResizeObserver(() => syncConfigUI()).observe(body);
 }
 
 function syncConfigUI() {
   for (const c of CONTROLS) {
-    const seg = document.querySelector(`.seg[data-key="${c.key}"]`);
-    if (!seg) continue;
-    const cur = JSON.stringify(state.config[c.key]);
-    seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.value === cur));
+    if (c.section) continue;
+    const cur = state.config[c.key];
+    if (c.kind === 'detent') {
+      const d = document.querySelector(`.detent[data-key="${c.key}"]`);
+      if (!d) continue;
+      let i = c.opts.findIndex(([v]) => v === cur);
+      if (i < 0) i = 0;
+      const pct = 100 * i / (c.opts.length - 1);
+      d.querySelector('.knob').style.left = pct + '%';
+      d.querySelector('.fill').style.width = pct + '%';
+      d.querySelectorAll('.tick').forEach((t, k) => t.classList.toggle('on', k <= i));
+      d.querySelectorAll('.scale span').forEach((s, k) => s.classList.toggle('active', k === i));
+      d.setAttribute('aria-valuetext', c.readout(cur));
+      const ro = document.querySelector(`.readout[data-key="${c.key}"]`);
+      if (ro && ro.textContent !== c.readout(cur)) { ro.textContent = c.readout(cur); restartAnimation(ro, 'tick', ['tick']); }
+    } else {
+      const seg = document.querySelector(`.seg[data-key="${c.key}"]`);
+      if (!seg) continue;
+      const s = JSON.stringify(cur);
+      seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.value === s));
+      positionIndicator(seg);
+    }
+  }
+  const qseg = $('#quickSeg');
+  if (qseg) {
+    qseg.querySelectorAll('button').forEach((b) => {
+      const p = QUICK_SETS[Number(b.dataset.i)][1];
+      b.classList.toggle('active', Object.keys(p).every((k) => state.config[k] === p[k]));
+    });
+    positionIndicator(qseg);
   }
   $('#hitTime').value = state.config.hit_time;
   $('#missPenalty').value = state.config.miss_penalty;
@@ -310,12 +410,34 @@ function renderGeometry() {
     ['TAG BITS', g.tag_bits], ['INDEX BITS', g.index_bits], ['OFFSET BITS', g.offset_bits],
   ];
   $('#geoGrid').innerHTML = items.map(([k, v]) => `<div class="geo"><span class="lbl">${k}</span><span class="lcd">${v}</span></div>`).join('');
+  // schematic: one square per line (clipped to 8 × 8), the real shape of the array
+  const R = Math.min(g.num_sets, 8), C = Math.min(g.ways, 8);
+  const moreR = g.num_sets > 8, moreC = g.ways > 8;
+  let cells = '';
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) cells += '<i></i>';
+    if (moreC) cells += '<i class="more">…</i>';
+  }
+  if (moreR) { for (let c = 0; c < C + (moreC ? 1 : 0); c++) cells += '<i class="more">⋮</i>'; }
+  const tagStoreBits = g.num_blocks * (g.tag_bits + 1 + (g.write_policy === 'WB' ? 1 : 0));
+  const overhead = 100 * tagStoreBits / (g.cache_size * 8);
+  const tagStore = tagStoreBits / 8;
+  $('#geoSchematic').innerHTML =
+    `<div class="schem-grid" style="grid-template-columns: repeat(${C + (moreC ? 1 : 0)}, 11px)">${cells}</div>` +
+    `<div class="schem-caption"><b>${g.num_sets}</b> sets × <b>${g.ways}</b> way${g.ways > 1 ? 's' : ''}<br>` +
+    `each line <b>${g.block_size} B</b> = ${g.block_size / g.word_size} words<br>` +
+    `tag store <b>${tagStore >= 1024 ? (tagStore / 1024).toFixed(2) + ' KiB' : Math.round(tagStore) + ' B'}</b> · ${overhead.toFixed(1)} % overhead</div>`;
   const total = g.address_bits;
   const pct = (b) => (100 * b / total).toFixed(2) + '%';
   $('#bitRuler').innerHTML =
     `<span class="tag" style="width:${pct(g.tag_bits)}">TAG ${g.tag_bits}</span>` +
     (g.index_bits ? `<span class="idx" style="width:${pct(g.index_bits)}">IDX ${g.index_bits}</span>` : '') +
     `<span class="off" style="width:${pct(g.offset_bits)}">OFF ${g.offset_bits}</span>`;
+  const hi = total - 1, idxHi = g.offset_bits + g.index_bits - 1;
+  $('#bitScale').innerHTML =
+    `<span style="width:${pct(g.tag_bits)}"><i>${hi}</i><i>${g.offset_bits + g.index_bits}</i></span>` +
+    (g.index_bits ? `<span style="width:${pct(g.index_bits)}"><i>${idxHi}</i><i>${g.offset_bits}</i></span>` : '') +
+    `<span style="width:${pct(g.offset_bits)}"><i>${g.offset_bits - 1}</i><i>0</i></span>`;
   $('#cliEquiv').textContent = cliEquivalent();
 }
 
@@ -655,7 +777,8 @@ function renderCounters() {
   $('#missBar .comp').style.width = (100 * z('compulsory') / m) + '%';
   $('#missBar .cap').style.width = (100 * z('capacity') / m) + '%';
   $('#missBar .conf').style.width = (100 * z('conflict') / m) + '%';
-  $('#counterGrid').innerHTML = COUNTER_ITEMS.map(([k, l, c]) => `<div class="ctr"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}</span></div>`).join('') +
+  const n = Math.max(1, z('accesses'));
+  $('#counterGrid').innerHTML = COUNTER_ITEMS.map(([k, l, c]) => `<div class="ctr ${c}" style="--pct:${Math.min(100, 100 * z(k) / n).toFixed(1)}%"><span class="lbl">${l}</span><span class="val ${c}">${z(k)}</span></div>`).join('') +
     `<div class="ctr"><span class="lbl">MEM TRAFFIC</span><span class="val">${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB</span></div>`;
   $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
   renderSpark();
@@ -693,10 +816,25 @@ function renderLog() {
 /* ------------------------------------------------------------------ */
 /*  Trace source                                                       */
 /* ------------------------------------------------------------------ */
+// tiny access-pattern icon per trace family (12 × 12 viewBox)
+function traceGlyph(name) {
+  const n = name.toLowerCase();
+  let body;
+  if (n.includes('conflict')) body = '<polyline points="1,9.5 3,2.5 5,9.5 7,2.5 9,9.5 11,2.5"/>';
+  else if (n.includes('loop')) body = '<polyline points="1,10.5 4,1.5 4,10.5 7,1.5 7,10.5 10,1.5 10,10.5"/>';
+  else if (n.includes('random')) body = '<circle cx="2.5" cy="8" r=".9"/><circle cx="5" cy="3" r=".9"/><circle cx="7.5" cy="9.5" r=".9"/><circle cx="9.5" cy="5" r=".9"/><circle cx="4" cy="6" r=".9"/>';
+  else if (n.includes('strided')) body = '<polyline points="1,10.5 3,10.5 3,8 5,8 5,5.5 7,5.5 7,3 9,3 9,1.5 11,1.5"/>';
+  else if (n.includes('matrix_col') || n.includes('col')) body = '<path d="M2 2v8M6 2v8M10 2v8" /><path d="M1.5 10l.5.8.5-.8M5.5 10l.5.8.5-.8M9.5 10l.5.8.5-.8"/>';
+  else if (n.includes('matrix')) body = '<path d="M2 2h8M2 6h8M2 10h8"/><path d="M10 1.5l.8.5-.8.5M10 5.5l.8.5-.8.5M10 9.5l.8.5-.8.5"/>';
+  else if (n.includes('sequential')) body = '<polyline points="1,10.5 11,1.5"/><polyline points="8,1.5 11,1.5 11,4.5"/>';
+  else body = '<rect x="2" y="1.5" width="8" height="9" rx="1"/><path d="M4 4h4M4 6h4M4 8h2"/>';
+  return `<svg viewBox="0 0 12 12">${body}</svg>`;
+}
+
 async function loadPresets() {
   const { traces } = await api('/api/traces');
   const list = $('#presetList');
-  list.innerHTML = traces.map((t) => `<button class="preset" data-name="${esc(t.name)}"><span class="name">${esc(t.name)}</span><span class="count">${t.accesses} acc</span><span class="desc">${esc(t.description)}</span></button>`).join('');
+  list.innerHTML = traces.map((t) => `<button class="preset" data-name="${esc(t.name)}"><i class="glyph">${traceGlyph(t.name)}</i><span class="name">${esc(t.name.replace(/\.trace$/, ''))}</span><span class="count">${t.accesses}</span><span class="desc">${esc(t.description)}</span></button>`).join('');
   list.querySelectorAll('.preset').forEach((b) => b.addEventListener('click', () => loadPreset(b.dataset.name)));
   return traces;
 }
