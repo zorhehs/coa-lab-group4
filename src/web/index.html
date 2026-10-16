@@ -3,278 +3,274 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CACHE-SIM — Configurable Cache Memory Simulator</title>
+<title>CACHE-SIM · P07 Configurable Cache Memory Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230969DA'/%3E%3Crect x='3' y='4' width='10' height='3' rx='.5' fill='%23fff'/%3E%3Crect x='3' y='9' width='6' height='3' rx='.5' fill='%23fff' opacity='.7'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23141518'/%3E%3Crect x='2' y='4' width='12' height='3' fill='%23F5B942'/%3E%3Crect x='2' y='9' width='7' height='3' fill='%2358D68D'/%3E%3C/svg%3E">
 </head>
 <body>
 
-<div class="app">
-
-  <!-- ============================ app bar ============================ -->
-  <header class="appbar">
-    <div class="app-title">
-      <span class="logo" aria-hidden="true"></span>
-      <span class="name">CACHE-SIM</span>
-      <span class="subtitle">Configurable Cache Memory Simulator</span>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <span class="brand-name">CACHE‑SIM</span>
+    <span class="brand-sub">P07 · CONFIGURABLE CACHE MEMORY SIMULATOR</span>
+  </div>
+  <div class="readout-strip" id="readoutStrip"></div>
+  <div class="transport">
+    <button class="tbtn" id="btnFirst" title="Reset to start (Home)">⏮</button>
+    <button class="tbtn" id="btnBack" title="Step back (←)">◀</button>
+    <button class="tbtn tbtn-play" id="btnPlay" title="Play / pause (Space)">▶</button>
+    <button class="tbtn" id="btnStep" title="Step forward (→)">▶▏</button>
+    <button class="tbtn" id="btnLast" title="Run to end (End)">⏭</button>
+    <div class="speed">
+      <span class="lbl">RATE</span>
+      <input type="range" id="speed" min="1" max="40" value="8">
+      <span class="lcd lcd-xs" id="speedOut">8/s</span>
+      <span class="rate-presets" id="ratePresets" title="playback rate presets (+ / − keys)">
+        <button data-rate="1">1</button><button data-rate="4">4</button><button data-rate="8" class="active">8</button><button data-rate="20">20</button>
+      </span>
     </div>
-
-    <div class="toolbar" role="toolbar" aria-label="Playback">
-      <div class="btn-group">
-        <button class="tbtn" id="btnFirst" title="Reset to start (Home)"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button>
-        <button class="tbtn" id="btnBack" title="Step back (←)"><svg viewBox="0 0 16 16"><path d="M11 3v10L4 8z"/></svg></button>
-        <button class="tbtn tbtn-play" id="btnPlay" title="Play / pause (Space)"><svg viewBox="0 0 16 16"><path d="M5 3v10l8-5z"/></svg></button>
-        <button class="tbtn" id="btnStep" title="Step forward (→)"><svg viewBox="0 0 16 16"><path d="M5 3v10l7-5z"/></svg></button>
-        <button class="tbtn" id="btnLast" title="Run to end (End)"><svg viewBox="0 0 16 16"><path d="M3 3v10l7-5zM11 3h2v10h-2z"/></svg></button>
-      </div>
-      <div class="field-inline">
-        <label for="speed">Rate</label>
-        <input type="range" id="speed" min="1" max="40" value="8">
-        <span class="value" id="speedOut">8/s</span>
-        <span class="rate-presets" id="ratePresets">
-          <button data-rate="1">1</button><button data-rate="4">4</button><button data-rate="8" class="active">8</button><button data-rate="20">20</button>
-        </span>
-      </div>
-      <div class="field-inline step-field">
-        <label>Step</label>
-        <span class="value mono" id="stepOut">0 / 0</span>
-      </div>
-      <div class="status-pill"><span class="led" id="statusLed"></span><span id="statusTxt">Idle</span></div>
+    <div class="status">
+      <span class="led" id="statusLed"></span>
+      <span class="status-txt" id="statusTxt">IDLE</span>
     </div>
-
-    <div class="app-actions">
-      <button class="btn btn-ghost" id="btnHelp" title="Keyboard shortcuts and help (?)">Help</button>
-    </div>
-    <div class="busy-bar" id="busyBar" hidden></div>
-  </header>
-
-  <!-- trace timeline: one tick per access, click or drag to seek -->
-  <div class="timeline empty" id="traceStrip" title="Trace timeline — one tick per access. Click or drag to seek.">
+    <button class="tbtn tbtn-help" id="btnHelp" title="Shortcuts &amp; help (?)">?</button>
+  </div>
+  <div class="trace-strip empty" id="traceStrip" title="trace timeline: one tick per access, click or drag to seek">
     <canvas id="traceCanvas"></canvas>
     <div class="trace-cursor" id="traceCursor" hidden></div>
-    <span class="trace-label" id="traceLabel">No trace loaded</span>
+    <span class="trace-label" id="traceLabel">NO TRACE LOADED</span>
   </div>
+  <div class="busy-bar" id="busyBar" hidden></div>
+</header>
 
-  <!-- ============================ workspace ============================ -->
-  <div class="workspace">
+<main class="deck">
 
-    <!-- sidebar: configuration, geometry, trace source -->
-    <aside class="sidebar" id="sidebar">
-      <section class="panel" id="modConfig">
-        <h2 class="panel-title">Configuration</h2>
-        <div class="panel-body" id="configBody"></div>
-        <div class="alert alert-error" id="configError" hidden></div>
-      </section>
+  <!-- ============================ LEFT RACK ============================ -->
+  <aside class="rack rack-left">
 
-      <section class="panel" id="modGeometry">
-        <h2 class="panel-title">Geometry <span class="panel-note">derived</span></h2>
-        <div class="panel-body">
-          <table class="kv" id="geoTable"></table>
-          <div class="bit-ruler-wrap">
-            <div class="bit-ruler" id="bitRuler"></div>
-            <div class="bit-scale" id="bitScale"></div>
-          </div>
-          <div class="cli-line">
-            <code id="cliEquiv"></code>
-            <button class="btn btn-small" id="btnCopyCli" title="Copy the equivalent command line">Copy</button>
-          </div>
+    <section class="module" id="modConfig">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">CONFIGURATION</span><span class="mod-sub">cache geometry &amp; policies</span></div>
+      <div class="mod-body" id="configBody"></div>
+      <div class="cfg-error" id="configError" hidden></div>
+    </section>
+
+    <section class="module" id="modGeometry">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">GEOMETRY</span><span class="mod-sub">derived</span></div>
+      <div class="mod-body">
+        <div class="geo-schem" id="geoSchematic"></div>
+        <div class="geo-grid" id="geoGrid"></div>
+        <span class="lbl">address bits · tag | index | offset</span>
+        <div class="bit-ruler" id="bitRuler"></div>
+        <div class="bit-scale" id="bitScale"></div>
+        <div class="cli-line">
+          <span class="lbl">CLI</span>
+          <code id="cliEquiv"></code>
+          <button class="mini" id="btnCopyCli" title="Copy command">COPY</button>
         </div>
-      </section>
-
-      <section class="panel" id="modTrace">
-        <h2 class="panel-title">Trace <span class="panel-note" id="traceStatus">none loaded</span></h2>
-        <div class="tabs tabs-small" id="traceTabs" role="tablist">
-          <button class="tab active" data-tab="preset" role="tab">Presets</button>
-          <button class="tab" data-tab="generate" role="tab">Generate</button>
-          <button class="tab" data-tab="paste" role="tab">Paste / file</button>
-        </div>
-        <div class="panel-body">
-          <div class="tab-pane" data-pane="preset">
-            <div class="preset-list" id="presetList"></div>
-          </div>
-          <div class="tab-pane" data-pane="generate" hidden>
-            <label class="field"><span>Pattern</span><select id="genKinds"></select></label>
-            <div class="gen-form" id="genForm"></div>
-            <div class="row-right"><button class="btn btn-primary" id="btnGenerate">Generate and load</button></div>
-          </div>
-          <div class="tab-pane" data-pane="paste" hidden>
-            <textarea id="pasteArea" spellcheck="false" placeholder="One access per line:&#10;R 0x1A3C&#10;W 0x1A40&#10;0 1A44          (Dinero)&#10;L 04010000,4  (Valgrind lackey)"></textarea>
-            <div class="row-between">
-              <label class="btn file-btn">Open file… <input type="file" id="fileInput" accept=".trace,.txt,.din,.out,.csv,*/*"></label>
-              <button class="btn btn-primary" id="btnLoadPaste">Load</button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </aside>
-
-    <!-- main workspace: simulation / experiments -->
-    <main class="main">
-      <div class="tabs main-tabs" id="mainTabs" role="tablist">
-        <button class="tab active" data-tab="sim" role="tab">Simulation</button>
-        <button class="tab" data-tab="exp" role="tab">Experiments</button>
       </div>
+    </section>
 
-      <div class="main-pane" data-pane="sim">
-        <section class="panel" id="modDecode">
-          <h2 class="panel-title">Address decode <span class="panel-note">tag · index · offset</span></h2>
-          <div class="panel-body">
-            <div class="decode-top">
-              <div class="addr-box mono" id="addrOut">— — — —</div>
-              <div class="op-badge" id="opBadge">·</div>
-              <div class="result-badge" id="resultBadge"></div>
-            </div>
-            <div class="bits" id="bitsOut"></div>
-            <div class="fields" id="fieldsOut"></div>
-            <div class="probe">
-              <label for="probeIn">Probe</label>
-              <input type="text" id="probeIn" class="input mono" placeholder="Type an address, e.g. 0x1A3C or 6716" spellcheck="false">
-              <button class="btn" id="btnInjectR" title="Append a read of this address to the trace">Inject read</button>
-              <button class="btn" id="btnInjectW" title="Append a write of this address to the trace">Inject write</button>
-            </div>
-            <div class="note" id="noteOut"></div>
-          </div>
-        </section>
-
-        <section class="panel panel-grow" id="modArray">
-          <h2 class="panel-title">Cache array <span class="panel-note" id="arraySub"></span>
-            <span class="legend">
-              <span><i class="sw hit"></i>Hit</span><span><i class="sw miss"></i>Miss</span><span><i class="sw victim"></i>Victim hit</span>
-              <span><i class="dot valid"></i>Valid</span><span><i class="dot dirty"></i>Dirty</span><span><i class="dot age"></i>LRU age</span>
-            </span>
-          </h2>
-          <div class="panel-body array-body">
-            <div class="heat" id="heatStrip" hidden></div>
-            <div class="way-head" id="wayHead" hidden></div>
-            <div class="array" id="arrayOut"></div>
-            <div class="victim" id="victimOut" hidden></div>
-          </div>
-          <div class="bus-strip" id="busStrip">
-            <span><i class="led" id="ledMemR"></i>Memory read</span>
-            <span><i class="led" id="ledMemW"></i>Memory write</span>
-            <span><i class="led" id="ledWb"></i>Write-back</span>
-            <span><i class="led" id="ledVc"></i>Victim swap</span>
-            <span class="bus-note" id="busNote">Memory bus idle</span>
-          </div>
-        </section>
-      </div>
-
-      <div class="main-pane" data-pane="exp" hidden>
-        <section class="panel" id="modExp">
-          <h2 class="panel-title">Parameter sweep <span class="panel-note">runs the loaded trace against many configurations</span>
-            <span class="panel-actions"><button class="btn btn-small" id="btnExportCsv" disabled>Export CSV</button></span>
-          </h2>
-          <div class="panel-body">
-            <div class="exp-controls">
-              <label class="field"><span>X axis</span><select id="sweepParam"></select></label>
-              <label class="field"><span>Series</span><select id="sweepSeries"></select></label>
-              <label class="field"><span>Metric</span><select id="sweepMetric"></select></label>
-              <div class="exp-buttons">
-                <button class="btn btn-primary" id="btnSweep">Run sweep</button>
-                <button class="btn" id="btnCompareTraces" title="Run the current configuration on every preset trace">Compare traces</button>
-              </div>
-            </div>
-            <div class="chart" id="chartOut"></div>
-            <div class="exp-table" id="sweepTable"></div>
-          </div>
-        </section>
-      </div>
-    </main>
-
-    <!-- inspector: statistics -->
-    <aside class="inspector">
-      <section class="panel" id="modCounters">
-        <h2 class="panel-title">Statistics <span class="panel-note" id="countersSub">at current step</span></h2>
-        <div class="panel-body">
-          <div class="kpis">
-            <div class="kpi"><span class="kpi-label">Hit ratio</span><span class="kpi-value good mono" id="hitRatio">0.000</span></div>
-            <div class="kpi"><span class="kpi-label">Miss ratio</span><span class="kpi-value bad mono" id="missRatio">0.000</span></div>
-            <div class="kpi"><span class="kpi-label">AMAT <small>cycles</small></span><span class="kpi-value mono" id="amat">0.00</span></div>
-          </div>
-          <div class="spark-wrap">
-            <div class="spark-head"><span>Hit ratio over the trace</span><b class="mono" id="sparkVal">—</b></div>
-            <canvas class="spark" id="sparkHit" height="48"></canvas>
-          </div>
-          <div class="miss-head"><span>Misses by type</span></div>
-          <div class="miss-bar" id="missBar"><span class="comp"></span><span class="cap"></span><span class="conf"></span></div>
-          <div class="miss-bar-legend"><span><i class="sw comp"></i>Compulsory</span><span><i class="sw cap"></i>Capacity</span><span><i class="sw conf"></i>Conflict</span></div>
-          <div class="counter-grid" id="counterGrid"></div>
+    <section class="module" id="modTrace">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">TRACE SOURCE</span><span class="mod-sub" id="traceStatus">none loaded</span></div>
+      <div class="mod-body">
+        <div class="tabs" id="traceTabs">
+          <button class="tab active" data-tab="preset">PRESET</button>
+          <button class="tab" data-tab="generate">GENERATE</button>
+          <button class="tab" data-tab="paste">PASTE / FILE</button>
         </div>
-      </section>
-    </aside>
-  </div>
+        <div class="tab-pane" data-pane="preset">
+          <div class="preset-list" id="presetList"></div>
+        </div>
+        <div class="tab-pane" data-pane="generate" hidden>
+          <div class="seg" id="genKinds"></div>
+          <div class="gen-form" id="genForm"></div>
+          <div class="row-right"><button class="btn btn-amber" id="btnGenerate">GENERATE &amp; LOAD</button></div>
+        </div>
+        <div class="tab-pane" data-pane="paste" hidden>
+          <textarea id="pasteArea" spellcheck="false" placeholder="# one access per line&#10;R 0x1A3C&#10;W 0x1A40&#10;0 1A44      (dinero)&#10;L 04010000,4 (valgrind lackey)"></textarea>
+          <div class="row-between">
+            <label class="btn btn-ghost file-btn">OPEN FILE <input type="file" id="fileInput" accept=".trace,.txt,.din,.out,.csv,*/*"></label>
+            <button class="btn btn-amber" id="btnLoadPaste">LOAD</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <!-- ============================ bottom panel: access log ============================ -->
-  <section class="bottom" id="bottomPanel">
-    <div class="bottom-head">
-      <button class="collapse" id="btnLogToggle" title="Show / hide the access log" aria-expanded="true"><svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
-      <h2 class="panel-title">Access log <span class="panel-note" id="logSub"></span></h2>
-      <input type="search" class="input input-small" id="logFilter" placeholder="Filter: address, HIT, MISS, R, W…" spellcheck="false">
-    </div>
-    <div class="log-wrap" id="logWrap">
-      <div class="log-head"><span>#</span><span>Op</span><span>Address</span><span>Set</span><span>Way</span><span>Result</span></div>
-      <div class="log" id="logOut"></div>
-    </div>
+  </aside>
+
+  <!-- ============================ CENTER RACK ============================ -->
+  <section class="rack rack-center">
+
+    <section class="module" id="modDecode">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head">
+        <span class="mod-title">ADDRESS DECODE</span>
+        <span class="mod-sub">tag · index · offset</span>
+        <span class="mod-right"><span class="lbl">STEP</span> <span class="lcd lcd-sm" id="stepOut">0 / 0</span></span>
+      </div>
+      <div class="mod-body">
+        <div class="decode-top">
+          <div class="lcd lcd-lg" id="addrOut">— — — —</div>
+          <div class="op-badge" id="opBadge">·</div>
+          <div class="result-badge" id="resultBadge"></div>
+        </div>
+        <div class="bits" id="bitsOut"></div>
+        <div class="fields" id="fieldsOut"></div>
+        <div class="probe">
+          <span class="lbl">PROBE</span>
+          <input type="text" id="probeIn" class="lcd-input" placeholder="type an address, e.g. 0x1A3C or 6716" spellcheck="false">
+          <button class="btn btn-ghost" id="btnInjectR" title="Append a read of this address to the trace">INJECT R</button>
+          <button class="btn btn-ghost" id="btnInjectW" title="Append a write of this address to the trace">INJECT W</button>
+        </div>
+        <div class="note" id="noteOut"></div>
+      </div>
+    </section>
+
+    <section class="module" id="modArray">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head">
+        <span class="mod-title">CACHE ARRAY</span>
+        <span class="mod-sub" id="arraySub"></span>
+        <span class="mod-right legend">
+          <span><i class="led on-green"></i>HIT</span>
+          <span><i class="led on-red"></i>MISS</span>
+          <span><i class="led on-blue"></i>VICTIM</span>
+          <span><i class="dot dirty"></i>DIRTY</span>
+          <span><i class="dot age"></i>LRU AGE</span>
+        </span>
+      </div>
+      <div class="mod-body array-body">
+        <div class="heat" id="heatStrip" hidden></div>
+        <div class="way-head" id="wayHead" hidden></div>
+        <div class="array" id="arrayOut"></div>
+        <div class="victim" id="victimOut" hidden></div>
+      </div>
+      <div class="bus-strip" id="busStrip">
+        <span><i class="led" id="ledMemR"></i>MEM READ</span>
+        <span><i class="led" id="ledMemW"></i>MEM WRITE</span>
+        <span><i class="led" id="ledWb"></i>WRITE-BACK</span>
+        <span><i class="led" id="ledVc"></i>VICTIM SWAP</span>
+        <span class="bus-note" id="busNote">memory bus idle</span>
+      </div>
+    </section>
+
+    <section class="module" id="modExp">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head">
+        <span class="mod-title">EXPERIMENTS</span>
+        <span class="mod-sub">parameter sweeps on the loaded trace</span>
+        <span class="mod-right"><button class="mini" id="btnExportCsv" disabled>EXPORT CSV</button></span>
+      </div>
+      <div class="mod-body">
+        <div class="exp-controls">
+          <div class="ctl"><span class="lbl">X AXIS</span><div class="seg" id="sweepParam"></div></div>
+          <div class="ctl"><span class="lbl">SERIES</span><div class="seg" id="sweepSeries"></div></div>
+          <div class="ctl"><span class="lbl">METRIC</span><div class="seg" id="sweepMetric"></div></div>
+          <div class="ctl ctl-btns">
+            <button class="btn btn-amber" id="btnSweep">RUN SWEEP</button>
+            <button class="btn btn-ghost" id="btnCompareTraces" title="Run the current configuration on every preset trace">COMPARE TRACES</button>
+          </div>
+        </div>
+        <div class="chart" id="chartOut"><div class="chart-empty">No sweep yet. Choose an axis and press RUN SWEEP.</div></div>
+        <div class="exp-table" id="sweepTable"></div>
+      </div>
+    </section>
+
   </section>
 
-  <!-- ============================ status bar ============================ -->
-  <footer class="statusbar">
-    <span class="readout-strip" id="readoutStrip"></span>
-    <span class="status-right">
-      <span id="footVersion"></span>
-      <span>Group 04 · Aliyan Zulfiqar · Shehroz Riaz</span>
-      <span>NUST Balochistan Campus · COA Lab</span>
-    </span>
-  </footer>
-</div>
+  <!-- ============================ RIGHT RACK ============================ -->
+  <aside class="rack rack-right">
 
-<!-- help dialog -->
+    <section class="module" id="modCounters">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">COUNTERS</span><span class="mod-sub" id="countersSub">at current step</span></div>
+      <div class="mod-body">
+        <div class="big-readouts">
+          <div class="big"><span class="lbl">HIT RATIO</span><span class="lcd lcd-xl green" id="hitRatio">0.000</span></div>
+          <div class="big"><span class="lbl">MISS RATIO</span><span class="lcd lcd-xl red" id="missRatio">0.000</span></div>
+          <div class="big"><span class="lbl">AMAT</span><span class="lcd lcd-xl" id="amat">0.00</span><span class="unit">cyc</span></div>
+        </div>
+        <div class="spark-wrap">
+          <span class="lbl">hit ratio over the trace <b id="sparkVal">—</b></span>
+          <canvas class="spark" id="sparkHit" height="44"></canvas>
+        </div>
+        <div class="miss-bar" id="missBar"><span class="comp"></span><span class="cap"></span><span class="conf"></span></div>
+        <div class="miss-bar-legend"><span><i class="sw comp"></i>COMPULSORY</span><span><i class="sw cap"></i>CAPACITY</span><span><i class="sw conf"></i>CONFLICT</span></div>
+        <div class="counter-grid" id="counterGrid"></div>
+      </div>
+    </section>
+
+    <section class="module module-fill" id="modLog">
+      <div class="screws"><i></i><i></i><i></i><i></i></div>
+      <div class="mod-head"><span class="mod-title">ACCESS LOG</span><span class="mod-sub" id="logSub"></span></div>
+      <div class="log-head"><span>#</span><span>OP</span><span>ADDRESS</span><span>SET</span><span>WAY</span><span>RESULT</span></div>
+      <div class="log" id="logOut"></div>
+    </section>
+
+  </aside>
+</main>
+
+<footer class="foot">
+  <span>NUST BALOCHISTAN CAMPUS · DEPARTMENT OF COMPUTER SCIENCE · COMPUTER ARCHITECTURE &amp; ORGANIZATION LAB</span>
+  <span>GROUP 04 · ALIYAN ZULFIQAR · SHEHROZ RIAZ</span>
+  <span id="footVersion"></span>
+</footer>
+
 <div class="overlay" id="helpOverlay" hidden>
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
-    <div class="dialog-head">
-      <h2 id="helpTitle">Help</h2>
-      <button class="btn btn-ghost" id="btnHelpClose">Close</button>
+  <section class="module" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="screws"><i></i><i></i><i></i><i></i></div>
+    <div class="mod-head">
+      <span class="mod-title" id="helpTitle">HELP</span>
+      <span class="mod-sub">keyboard shortcuts · how to read the panels</span>
+      <span class="mod-right"><button class="mini" id="btnHelpClose">CLOSE · ESC</button></span>
     </div>
-    <div class="dialog-body help-grid">
+    <div class="mod-body help-grid">
       <div>
-        <h4>Keyboard</h4>
+        <h4>TRANSPORT</h4>
         <dl>
-          <dt><kbd>Space</kbd></dt><dd>Play / pause</dd>
-          <dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>Step one access forward / back</dd>
-          <dt><kbd>Shift</kbd>+<kbd>→</kbd></dt><dd>Jump ten accesses (either direction)</dd>
-          <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Reset / run to the end</dd>
-          <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Playback rate up / down</dd>
-          <dt><kbd>/</kbd></dt><dd>Jump to the probe field</dd>
-          <dt><kbd>?</kbd></dt><dd>Open or close this dialog</dd>
-          <dt><kbd>Esc</kbd></dt><dd>Close the dialog · leave a text field</dd>
+          <dt><kbd>Space</kbd></dt><dd>play / pause</dd>
+          <dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>step one access forward / back</dd>
+          <dt><kbd>Shift</kbd>+<kbd>→</kbd></dt><dd>jump ten accesses (either direction)</dd>
+          <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>reset / run to the end</dd>
+          <dt><kbd>timeline</kbd></dt><dd>click or drag the strip under the transport to seek; green / red / blue ticks are hits, misses, victim hits</dd>
+          <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>playback rate up / down</dd>
+          <dt><kbd>/</kbd></dt><dd>jump to the PROBE field</dd>
+          <dt><kbd>?</kbd></dt><dd>open or close this overlay</dd>
+          <dt><kbd>Esc</kbd></dt><dd>close the overlay · leave a text field</dd>
         </dl>
-        <p>The timeline under the toolbar shows one tick per access. Click or drag it to seek.</p>
       </div>
       <div>
-        <h4>Reading the cache array</h4>
+        <h4>READING THE CACHE ARRAY</h4>
         <div class="legend-list">
-          <span><i class="sw hit"></i>Hit — the block was already in the set.</span>
-          <span><i class="sw miss"></i>Miss — fetched from memory. COMP / CAPA / CONF is the 3C type; a red tag floating out of the cell is the evicted line.</span>
-          <span><i class="sw victim"></i>Victim hit — found in the victim cache and swapped back without a memory read.</span>
-          <span><i class="dot valid"></i>Left dot: valid bit. <i class="dot dirty"></i>Right dot: dirty bit (write-back only).</span>
-          <span><i class="dot age"></i>Bars under a line: LRU age, full = most recently used.</span>
+          <span><i class="led on-green"></i>HIT — the block was already in the set</span>
+          <span><i class="led on-red"></i>MISS — fetched from memory; COMP / CAPA / CONF is the 3C type, a red tag floating out is the evicted line</span>
+          <span><i class="led on-blue"></i>VICTIM — found in the victim cache and swapped back, no memory read</span>
+          <span><i class="dot" style="background:var(--green)"></i>left LED valid bit · <i class="dot dirty"></i>right LED dirty bit (write-back only)</span>
+          <span><i class="dot age"></i>bars under a line: LRU age, full = most recently used</span>
         </div>
       </div>
       <div>
-        <h4>The 3C miss types</h4>
+        <h4>THE 3C MISS TYPES</h4>
         <p><b>Compulsory</b> — first touch of a block; no cache avoids it.<br>
            <b>Capacity</b> — a fully associative cache of the same size would also miss: the working set is too big.<br>
            <b>Conflict</b> — only the mapping caused it; more ways (or a victim cache) would have kept the block.</p>
       </div>
       <div>
-        <h4>Workflow</h4>
-        <p>1. Set geometry and policies in the sidebar; the whole trace re-runs instantly.<br>
-           2. Pick a preset trace, generate a pattern, or paste a Dinero / Valgrind trace.<br>
-           3. Step through the address decode and the array; the statistics and the access log follow the current step.<br>
-           4. Open Experiments to sweep a parameter; hover a bar for its numbers; export CSV for the report.</p>
+        <h4>WORKFLOW</h4>
+        <p><b>1</b> set geometry and policies in CONFIGURATION — the whole trace re-runs instantly.<br>
+           <b>2</b> load a preset, generate a pattern, or paste a Dinero / Valgrind trace.<br>
+           <b>3</b> step through ADDRESS DECODE and the array; COUNTERS and the ACCESS LOG follow the current step.<br>
+           <b>4</b> RUN SWEEP in EXPERIMENTS to compare settings — hover a bar for its numbers, EXPORT CSV for the report.</p>
       </div>
     </div>
-  </div>
+  </section>
 </div>
 
 <div class="toast" id="toast" hidden></div>
