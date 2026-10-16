@@ -23,6 +23,7 @@ from urllib.parse import unquote, urlparse
 
 from . import __version__
 from .core import CacheConfig, ConfigError, decode, simulate
+from .traces import parse_address, TraceError  # noqa: E402
 from .experiments import METRICS, SWEEPABLE, sweep
 from .traces import GENERATOR_PARAMS, TraceError, format_trace, generate, parse_trace
 
@@ -30,6 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))      # src/
 WEB_DIR = os.path.join(ROOT, "web")
 DATA_DIR = os.path.join(os.path.dirname(ROOT), "data")
 EVENT_LIMIT_DEFAULT = 4000
+SNAPSHOT_BUDGET = 150_000      # set-snapshot entries per simulate() response (2 x ways per event)
 MAX_BODY = 64 * 1024 * 1024
 
 
@@ -48,15 +50,17 @@ def _trace_files() -> list:
             continue
         path = os.path.join(DATA_DIR, name)
         desc = ""
-        count = 0
         with open(path, errors="replace") as fh:
-            for line in fh:
-                s = line.strip()
-                if s.startswith("#"):
-                    if not desc:
-                        desc = s.lstrip("# ").strip()
-                elif s:
-                    count += 1
+            text = fh.read()
+        for line in text.splitlines():
+            s = line.strip()
+            if s.startswith("#"):
+                desc = s.lstrip("# ").strip()
+                break
+        try:
+            count = len(parse_trace(text))
+        except TraceError:
+            count = 0
         out.append({"name": name, "accesses": count, "description": desc,
                     "size": os.path.getsize(path)})
     return out
@@ -92,18 +96,18 @@ def handle_api(method: str, path: str, body: Dict[str, Any]) -> Any:
         params = body.get("params", {}) or {}
         try:
             acc = generate(kind, **params)
-        except (TraceError, ValueError, TypeError) as e:
+        except (TraceError, ValueError, TypeError, ArithmeticError) as e:
             raise ApiError("generate: %s" % e)
         header = "generator: %s %s\n%d accesses" % (kind, " ".join("%s=%s" % kv for kv in params.items()), len(acc))
         return {"text": format_trace(acc, header), "count": len(acc), "kind": kind}
 
     if path == "/api/decode":
         cfg = _config(body.get("config"))
-        try:
-            addr = int(str(body.get("address", "0")).strip() or "0", 0)
-        except ValueError:
+        try:                              # same rules as a trace line: 0x1A3C, 1A3C, 6716, 0b...
+            addr = parse_address(str(body.get("address", "0")).strip() or "0")
+        except (TraceError, ValueError):
             raise ApiError("bad address")
-        return {"config": cfg.to_dict(), "fields": decode(cfg, addr).to_dict()}
+        return {"config": cfg.to_dict(), "address_in": addr, "fields": decode(cfg, addr).to_dict()}
 
     if path == "/api/simulate":
         cfg = _config(body.get("config"))
@@ -111,7 +115,9 @@ def handle_api(method: str, path: str, body: Dict[str, Any]) -> Any:
             trace = parse_trace(body.get("trace", ""), bool(body.get("include_instr", False)))
         except TraceError as e:
             raise ApiError("trace: %s" % e)
-        limit = int(body.get("event_limit", EVENT_LIMIT_DEFAULT))
+        limit = max(0, int(body.get("event_limit", EVENT_LIMIT_DEFAULT)))
+        # every kept event carries two snapshots of its whole set, so bound the count by the ways
+        limit = min(limit, max(16, SNAPSHOT_BUDGET // max(1, cfg.ways)))
         return simulate(cfg, trace, keep_events=limit)
 
     if path == "/api/sweep":
@@ -158,7 +164,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         body: Dict[str, Any] = {}
         if method == "POST":
-            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return self._send_json({"error": "bad Content-Length"}, 400)
             if n > MAX_BODY:
                 return self._send_json({"error": "request too large"}, 413)
             raw = self.rfile.read(n) if n else b"{}"

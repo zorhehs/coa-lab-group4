@@ -27,7 +27,7 @@ cache. A browser-based GUI, styled as a bench instrument, decodes each address i
 index and offset, animates hits and misses on the cache array, and runs parameter sweeps
 with charts. A trace generator produces sequential, loop, random, strided, matrix and
 conflict patterns; real program traces from Valgrind are also accepted. The simulator is
-verified by 39 unit tests derived from hand-worked textbook examples. Experiments
+verified by 46 unit tests derived from hand-worked textbook examples. Experiments
 reproduce the expected behaviour of each parameter and quantify, for example, that a
 two-entry victim cache reduces AMAT on a thrashing direct-mapped cache from 101 to 9.1
 cycles.
@@ -144,7 +144,7 @@ Table*: Code base by component
 | CLI (`run`, `decode`, `gen`, `sweep`, `serve`) | `src/cachesim/cli.py` | ~230 |
 | HTTP server + JSON API | `src/cachesim/server.py` | ~190 |
 | GUI | `src/web/{index.html,style.css,app.js}` | ~1300 |
-| tests | `tests/` | 39 tests |
+| tests | `tests/` | 46 tests |
 
 **Access events.** Each access returns an `AccessEvent` containing the decoded fields,
 set and way, result (`HIT`, `MISS`, `VICTIM`), miss type, eviction details, memory
@@ -182,7 +182,7 @@ one-word blocks) gives `M M H H M M H M`, hit ratio 0.375, with block 18 displac
 in set 2 — exactly the textbook table. LRU vs FIFO on the sequence 0, 4, 0, 8, 0 gives
 two hits vs one. The conflict sequence 0, 4, 0, 4, 0, 4 on a 4-line direct-mapped cache
 yields 2 compulsory + 4 conflict misses; the same count on a fully-associative cache with a
-5-block working set yields 5 compulsory + 5 capacity. All 39 tests pass.
+5-block working set yields 5 compulsory + 5 capacity. All 46 tests pass.
 
 ### 4.2 Associativity and replacement policy (Figure 4, `fig1_assoc_vs_policy_conflict.svg`)
 

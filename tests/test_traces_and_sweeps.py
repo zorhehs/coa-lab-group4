@@ -134,5 +134,49 @@ class TestApi(unittest.TestCase):
             handle_api("GET", "/api/traces/../secret.trace", {})
 
 
+class TestRobustness(unittest.TestCase):
+    """Edge cases found in the QA pass: tool dumps, bad generator parameters, API bounds."""
+
+    def test_dinero_instruction_and_escape_records_are_skipped(self):
+        acc = parse_trace("2 1000\n0 1A44\n3 0\n4 0\n1 1A48\n")
+        self.assertEqual(acc, [("R", 0x1A44), ("W", 0x1A48)])
+        self.assertEqual(parse_trace("2 1000\n0 1A44\n", include_instr=True)[0], ("R", 0x1000))
+
+    def test_valgrind_banner_lines_are_skipped(self):
+        acc = parse_trace("==1234== Lackey, an example tool\n==1234== \n L 04010000,4\n S 04010010,8\n")
+        self.assertEqual(acc, [("R", 0x4010000), ("W", 0x4010010)])
+
+    def test_sweep_series_requires_values(self):
+        with self.assertRaises(ValueError):
+            sweep(CacheConfig(), [("R", 0)], "associativity", [1, 2], "block_size", None)
+
+    def test_generator_rejects_zero_step(self):
+        for kind, bad in [("random", {"align": 0}), ("loop", {"stride": 0}),
+                          ("sequential", {"stride": 0}), ("matrix", {"n": 0})]:
+            with self.assertRaises(TraceError):
+                generate(kind, **bad)
+
+    def test_api_decode_accepts_trace_style_addresses(self):
+        r = handle_api("POST", "/api/decode", {"config": {}, "address": "1A3C"})
+        self.assertEqual(r["address_in"], 0x1A3C)
+        self.assertEqual(handle_api("POST", "/api/decode", {"config": {}, "address": "6716"})["address_in"], 6716)
+        with self.assertRaises(ApiError):
+            handle_api("POST", "/api/decode", {"config": {}, "address": "zz"})
+
+    def test_api_simulate_bounds_snapshots_by_ways(self):
+        trace = "\n".join("R 0x%X" % (i * 4) for i in range(320))
+        cfg = {"cache_size": 2048, "block_size": 4, "associativity": 0}       # 512 ways
+        r = handle_api("POST", "/api/simulate", {"config": cfg, "trace": trace, "event_limit": 4000})
+        self.assertTrue(r["truncated"])
+        self.assertLessEqual(len(r["events"]), 300)
+        self.assertEqual(r["stats"]["accesses"], 320)
+        self.assertEqual(len(r["last_event"]["set_after"]), 512)             # the final event keeps its snapshot
+
+    def test_masked_addresses_are_counted(self):
+        r = handle_api("POST", "/api/simulate", {"config": {"address_bits": 16},
+                                                  "trace": "R 0x12340\nR 0x40\n", "event_limit": 10})
+        self.assertEqual(r["masked_addresses"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

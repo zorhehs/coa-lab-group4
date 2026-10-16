@@ -75,6 +75,8 @@ def sweep(base: CacheConfig, trace, param: str, values: Sequence[Any],
         raise ValueError("cannot sweep %r" % param)
     if series_param and series_param not in SWEEPABLE:
         raise ValueError("cannot sweep %r" % series_param)
+    if series_param and not series_values:
+        raise ValueError("series values are required when a series parameter is given")
     series = list(series_values or [None]) if series_param else [None]
     rows: List[Dict[str, Any]] = []
     base_d = base.to_dict()

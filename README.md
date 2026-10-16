@@ -57,7 +57,7 @@ coa-lab-group4/
 │   │   ├── cli.py               run · decode · gen · sweep · serve
 │   │   └── server.py            stdlib HTTP server + JSON API for the GUI
 │   └── web/                     index.html · style.css · app.js  (the GUI)
-├── tests/                       39 unit tests checked against hand-worked examples
+├── tests/                       46 unit tests checked against hand-worked examples
 ├── docs/                        design.md · hand_worked_examples.md · report.md · slides.md · demo_script.md
 ├── results/                     figures (SVG), CSV tables and summary.md from scripts/experiments.py
 ├── scripts/                     run_demo.sh · generate_traces.sh · experiments.py

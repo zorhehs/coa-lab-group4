@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import random
 import re
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 Access = Tuple[str, int]
 
@@ -55,6 +55,8 @@ def parse_trace(text: str, include_instr: bool = False) -> List[Access]:
     """Parse trace text into a list of ``(op, address)`` tuples."""
     out: List[Access] = []
     for lineno, raw in enumerate(text.splitlines(), 1):
+        if raw.lstrip().startswith("=="):   # valgrind banner / summary lines
+            continue
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
@@ -65,6 +67,11 @@ def parse_trace(text: str, include_instr: bool = False) -> List[Access]:
         if op_tok == "I":            # instruction fetch (lackey)
             if include_instr:
                 op_tok = "L"
+            else:
+                continue
+        if op_tok in ("2", "3", "4"):  # dinero: 2 = instruction fetch, 3 / 4 = escape records
+            if op_tok == "2" and include_instr:
+                op_tok = "0"
             else:
                 continue
         try:
@@ -92,6 +99,12 @@ def format_trace(accesses: Iterable[Access], header: str = "") -> str:
 # --------------------------------------------------------------------------- #
 # Generators
 # --------------------------------------------------------------------------- #
+def _positive(**params: Any) -> None:
+    for name, value in params.items():
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            raise TraceError("%s must be a positive number (got %r)" % (name, value))
+
+
 def _with_writes(addrs: List[int], write_ratio: float, rng: random.Random) -> List[Access]:
     return [("W" if rng.random() < write_ratio else "R", a) for a in addrs]
 
@@ -99,6 +112,7 @@ def _with_writes(addrs: List[int], write_ratio: float, rng: random.Random) -> Li
 def gen_sequential(start: int = 0, count: int = 256, stride: int = 4,
                    write_ratio: float = 0.0, seed: int = 1) -> List[Access]:
     """Walk memory once: start, start+stride, ...  (streaming / array scan)."""
+    _positive(stride=stride)
     rng = random.Random(seed)
     return _with_writes([start + i * stride for i in range(count)], write_ratio, rng)
 
@@ -106,6 +120,7 @@ def gen_sequential(start: int = 0, count: int = 256, stride: int = 4,
 def gen_loop(start: int = 0, array_bytes: int = 256, stride: int = 4, iterations: int = 4,
              write_ratio: float = 0.0, seed: int = 1) -> List[Access]:
     """Repeatedly sweep an array (the classic for-loop over a working set)."""
+    _positive(stride=stride)
     rng = random.Random(seed)
     one_pass = [start + i for i in range(0, array_bytes, stride)]
     return _with_writes(one_pass * iterations, write_ratio, rng)
@@ -114,6 +129,7 @@ def gen_loop(start: int = 0, array_bytes: int = 256, stride: int = 4, iterations
 def gen_random(start: int = 0, range_bytes: int = 4096, count: int = 256, align: int = 4,
                write_ratio: float = 0.0, seed: int = 1) -> List[Access]:
     """Uniformly random word addresses inside a range (worst case for locality)."""
+    _positive(align=align, range_bytes=range_bytes)
     rng = random.Random(seed)
     n = max(1, range_bytes // align)
     addrs = [start + rng.randrange(n) * align for _ in range(count)]
@@ -123,6 +139,7 @@ def gen_random(start: int = 0, range_bytes: int = 4096, count: int = 256, align:
 def gen_strided(start: int = 0, stride: int = 64, count: int = 256,
                 write_ratio: float = 0.0, seed: int = 1) -> List[Access]:
     """Fixed large stride, e.g. walking one column of a row-major matrix."""
+    _positive(stride=stride)
     rng = random.Random(seed)
     return _with_writes([start + i * stride for i in range(count)], write_ratio, rng)
 
@@ -130,6 +147,7 @@ def gen_strided(start: int = 0, stride: int = 64, count: int = 256,
 def gen_matrix(n: int = 16, elem: int = 4, order: str = "row", start: int = 0,
                write_ratio: float = 0.0, seed: int = 1) -> List[Access]:
     """Traverse an n x n matrix of ``elem``-byte values in row- or column-major order."""
+    _positive(n=n, elem=elem)
     rng = random.Random(seed)
     addrs = []
     if order == "row":

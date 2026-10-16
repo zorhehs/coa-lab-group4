@@ -211,6 +211,7 @@ code { font-family: var(--mono); }
 }
 .lcd-input:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
 .lcd-input::placeholder { color: var(--dim); }
+.lcd-input.bad { color: var(--red); box-shadow: inset 0 0 0 1px rgba(var(--red-rgb),.55); }
 
 /* ---------------------------------------------------------------- */
 /*  Deck layout                                                       */

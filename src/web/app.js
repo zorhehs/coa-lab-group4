@@ -258,13 +258,18 @@ function scheduleSimulate() {
   simTimer = setTimeout(simulate, 120);
 }
 
+let simSeq = 0;                                   // a response older than the latest request is dropped
+// returns true (applied), 'stale' (superseded by a newer request), 'trace' (bad trace) or false (bad config)
 async function simulate(opts) {
   opts = opts || {};
-  if (!state.traceText.trim()) { renderGeometryOnly(); return; }
+  if (!state.traceText.trim()) { renderGeometryOnly(); return false; }
   stopPlayback();
   setStatus('BUSY', 'accent');
+  const seq = ++simSeq;
   try {
     const res = await api('/api/simulate', { config: state.config, trace: state.traceText, event_limit: state.meta.event_limit });
+    if (seq !== simSeq) return 'stale';
+    if (!res.total_accesses) throw new Error('trace: no accesses in the trace');
     state.sim = res;
     state.traceCount = res.total_accesses;
     $('#configError').hidden = true;
@@ -277,8 +282,11 @@ async function simulate(opts) {
     setStatus(state.step >= max && max > 0 ? 'END' : 'IDLE', state.step >= max && max > 0 ? 'accent' : null);
     return true;
   } catch (e) {
+    if (seq !== simSeq) return 'stale';
     if (/^trace:/i.test(e.message)) {
       toast(e.message, true);                   // a bad trace line: the caller keeps the previous trace
+      setStatus(atEnd() ? 'END' : 'IDLE', atEnd() ? 'accent' : null);
+      return 'trace';
     } else {
       $('#configError').textContent = e.message;
       $('#configError').hidden = false;
@@ -398,6 +406,10 @@ function geometry() {
   if (state.sim && JSON.stringify(cfgSubset(state.sim.config)) === JSON.stringify(cfgSubset(state.config))) return state.sim.config;
   const c = state.config;
   const num_blocks = c.cache_size / c.block_size;
+  const pow2 = (n) => Number.isInteger(n) && n > 0 && (n & (n - 1)) === 0;
+  const invalid = !pow2(c.cache_size) || !pow2(c.block_size) || num_blocks < 1 || c.associativity > num_blocks ||
+    (c.associativity > 1 && num_blocks % c.associativity !== 0);
+  if (invalid) return Object.assign({}, c, { invalid: true, num_blocks: NaN, ways: NaN, num_sets: NaN, offset_bits: NaN, index_bits: NaN, tag_bits: NaN });
   const fa = c.associativity === 0 || c.associativity === num_blocks;
   const ways = fa ? num_blocks : c.associativity;
   const num_sets = Math.max(1, num_blocks / ways);
@@ -419,15 +431,24 @@ function renderReadoutStrip() {
   const map = g.is_fully_associative ? 'FULL' : (g.ways === 1 ? 'DM' : g.ways + '-WAY');
   const parts = [map, fmtBytes(g.cache_size), g.block_size + ' B', g.num_sets + '×' + g.ways, g.replacement, g.write_policy + (g.write_allocate ? '/WA' : '/NWA')];
   if (g.victim_entries) parts.push('VC ' + g.victim_entries);
-  $('#brandCfg').textContent = parts.join(' · ');
+  $('#brandCfg').textContent = g.invalid ? 'invalid configuration' : parts.join(' · ');
   const chips = [];
-  if (state.traceName) chips.push(['TRACE', state.traceName], ['ACCESSES', String(state.traceCount || '')]);
-  else chips.push(['TRACE', 'none loaded']);
+  if (state.traceName) {
+    chips.push(['TRACE', state.traceName], ['ACCESSES', String(state.traceCount || 0)]);
+    if (state.sim && state.sim.masked_addresses) chips.push(['MASKED', `${state.sim.masked_addresses} addr > ${g.address_bits} b`]);
+  } else chips.push(['TRACE', 'none loaded']);
   $('#readoutStrip').innerHTML = chips.map(([k, v]) => `<span class="chip"><b>${k}</b>${esc(v)}</span>`).join('');
 }
 
 function renderGeometry() {
   const g = geometry();
+  if (g.invalid) {                                   // the server's message is under CONFIGURATION; show dashes, not fractions
+    $('#geoGrid').innerHTML = ['SETS', 'WAYS', 'LINES', 'TAG BITS', 'INDEX BITS', 'OFFSET BITS'].map((k) => `<div class="geo"><span class="lbl">${k}</span><span class="lcd dimmed">—</span></div>`).join('');
+    $('#geoSchematic').innerHTML = '<div class="schem-caption">invalid geometry — see the message under CONFIGURATION</div>';
+    $('#bitRuler').innerHTML = ''; $('#bitScale').innerHTML = '';
+    $('#cliEquiv').textContent = cliEquivalent();
+    return;
+  }
   const items = [
     ['SETS', g.num_sets], ['WAYS', g.ways], ['LINES', g.num_blocks],
     ['TAG BITS', g.tag_bits], ['INDEX BITS', g.index_bits], ['OFFSET BITS', g.offset_bits],
@@ -678,10 +699,10 @@ function renderTraceStrip() {
 function traceSeek(ev) {
   if (!state.sim) return;
   const strip = $('#traceStrip'), r = strip.getBoundingClientRect();
-  const n = state.sim.events.length;
+  const n = maxStep();
   const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
   stopPlayback();
-  setStep(Math.round(frac * n));
+  setStep(frac > 0.995 ? n : Math.round(frac * n));    // the far right edge always reaches END
 }
 
 /* ---- hit-ratio sparkline in COUNTERS ---- */
@@ -868,7 +889,7 @@ function renderCounters() {
     }
   }
   setCtr(grid.querySelector('.ctr[data-k="traffic"]'), `${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB`, 0,
-    prev && s.traffic_bytes > prev.traffic_bytes ? `+${s.traffic_bytes - prev.traffic_bytes} B` : '');
+    s && !isEndSummary() && s.traffic_bytes > (prev ? prev.traffic_bytes : 0) ? `+${s.traffic_bytes - (prev ? prev.traffic_bytes : 0)} B` : '');
   $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
   renderSpark();
 }
@@ -937,10 +958,11 @@ async function loadPreset(name) {
   try {
     const t = await api('/api/traces/' + encodeURIComponent(name));
     state.presetCache[name] = t.text;
-    if (await setTrace(t.text, name)) $$('.preset').forEach((b) => b.classList.toggle('active', b.dataset.name === name));
+    if (await setTrace(t.text, name) === true) $$('.preset').forEach((b) => b.classList.toggle('active', b.dataset.name === name));
   } catch (e) { toast(e.message, true); }
 }
-// load a new trace; if the server rejects it (bad line) the previously loaded trace stays in place
+// load a new trace; if the server rejects it (bad line) the previously loaded trace stays in place.
+// Returns true when this trace is now the one shown, 'stale' when a later load superseded it, false on a bad trace.
 async function setTrace(text, name) {
   const prev = { text: state.traceText, name: state.traceName, step: state.step };
   state.traceText = text;
@@ -948,7 +970,9 @@ async function setTrace(text, name) {
   state.step = 0;
   logBuiltFor = null;
   $('#traceStatus').textContent = name;
-  if (await simulate({ goto: 'start' })) return true;
+  const r = await simulate({ goto: 'start' });
+  if (r === 'stale') return 'stale';
+  if (r !== 'trace') return true;                 // config errors keep the new trace for later
   state.traceText = prev.text;
   state.traceName = prev.name;
   state.step = prev.step;
@@ -984,7 +1008,7 @@ function buildGenerator() {
     if (ord) params.order = ord.dataset.v;
     try {
       const r = await api('/api/generate', { kind, params });
-      if (await setTrace(r.text, `generated ${kind} (${r.count})`)) {
+      if (await setTrace(r.text, `generated ${kind} (${r.count})`) === true) {
         $$('.preset').forEach((b) => b.classList.remove('active'));
         toast(`generated ${r.count} accesses`);
       }
@@ -997,19 +1021,22 @@ function buildGenerator() {
 /* ------------------------------------------------------------------ */
 let probeTimer = null;
 async function probe() {
-  const v = $('#probeIn').value.trim();
-  if (!v) { state.probe = null; renderDecode(); return; }
+  const inp = $('#probeIn'), v = inp.value.trim();
+  if (!v) { state.probe = null; inp.classList.remove('bad'); renderDecode(); return; }
   try {
     state.probe = await api('/api/decode', { config: state.config, address: v });
-    renderDecode();
-  } catch (e) { state.probe = null; }
+    inp.classList.remove('bad');
+  } catch (e) { state.probe = null; inp.classList.add('bad'); }
+  renderDecode();
 }
-function inject(op) {
+// INJECT uses the same parse as PROBE (and as a trace line), so the two never disagree
+async function inject(op) {
   const v = $('#probeIn').value.trim();
   if (!v) { toast('type an address in PROBE first', true); return; }
-  let addr;
-  try { addr = Number(BigInt(v.startsWith('0x') || v.startsWith('0X') ? v : (/[a-fA-F]/.test(v) ? '0x' + v : v))); } catch (e) { toast('bad address', true); return; }
-  if (!Number.isFinite(addr) || addr < 0) { toast('bad address', true); return; }
+  clearTimeout(probeTimer);
+  await probe();
+  if (!state.probe) { toast(`bad address: ${v}`, true); return; }
+  const addr = state.probe.address_in;
   state.traceText = state.traceText.replace(/\s*$/, '') + `\n${op} ${hex(addr, 8)}\n`;
   const m = state.traceName.match(/^(.*) \+(\d+)$/);
   state.traceName = m ? `${m[1]} +${Number(m[2]) + 1}` : `${state.traceName} +1`;
@@ -1143,9 +1170,10 @@ async function compareTraces() {
   $('#btnCompareTraces').disabled = true;
   try {
     const rows = [];
+    const cfg = JSON.parse(JSON.stringify(state.config));   // one configuration for the whole comparison
     for (const n of names) {
       if (!state.presetCache[n]) state.presetCache[n] = (await api('/api/traces/' + encodeURIComponent(n))).text;
-      const r = await api('/api/simulate', { config: state.config, trace: state.presetCache[n], event_limit: 0 });
+      const r = await api('/api/simulate', { config: cfg, trace: state.presetCache[n], event_limit: 0 });
       rows.push({ param: 'trace', value: n, label: n.replace('.trace', ''), series: null, stats: r.stats,
         geometry: { num_sets: r.config.num_sets, ways: r.config.ways } });
     }
@@ -1383,12 +1411,12 @@ function wire() {
   $('#btnLoadPaste').addEventListener('click', async () => {
     const t = $('#pasteArea').value;
     if (!t.trim()) { toast('nothing to load', true); return; }
-    if (await setTrace(t, 'pasted trace')) $$('.preset').forEach((b) => b.classList.remove('active'));
+    if (await setTrace(t, 'pasted trace') === true) $$('.preset').forEach((b) => b.classList.remove('active'));
   });
   $('#fileInput').addEventListener('change', (e) => {
     const f = e.target.files[0]; if (!f) return;
     const rd = new FileReader();
-    rd.onload = () => { $('#pasteArea').value = rd.result.length > 200000 ? rd.result.slice(0, 200000) + '\n# (preview truncated; full file loaded)' : rd.result; setTrace(rd.result, f.name).then((ok) => { if (ok) $$('.preset').forEach((b) => b.classList.remove('active')); }); };
+    rd.onload = () => { $('#pasteArea').value = rd.result.length > 200000 ? rd.result.slice(0, 200000) + '\n# (preview truncated; full file loaded)' : rd.result; setTrace(rd.result, f.name).then((ok) => { if (ok === true) $$('.preset').forEach((b) => b.classList.remove('active')); }); };
     rd.readAsText(f);
     e.target.value = '';
   });

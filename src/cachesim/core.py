@@ -366,7 +366,9 @@ class AccessEvent:
         return self.result == "HIT"
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        # a shallow copy: the snapshots are already plain dicts, and dataclasses.asdict would
+        # deep-copy every one of them (that dominated the cost for caches with many ways)
+        return dict(self.__dict__)
 
 
 # --------------------------------------------------------------------------- #
@@ -435,7 +437,9 @@ class Cache:
         self.stats.traffic_bytes += nbytes
 
     # ---- the access -------------------------------------------------------
-    def access(self, op: str, address: int) -> AccessEvent:
+    def access(self, op: str, address: int, want_event: bool = True) -> AccessEvent:
+        """Perform one access.  ``want_event=False`` skips the per-way set snapshots (they are
+        the expensive part for caches with hundreds of ways) when the event will not be kept."""
         op = op.upper()
         if op not in ("R", "W"):
             raise ValueError("op must be 'R' or 'W'")
@@ -451,7 +455,7 @@ class Cache:
         f = self.decode(address)
         index, tag, block = f.index, f.tag, f.block_address
         lines = self.sets[index]
-        before = self.set_snapshot(index)
+        before = self.set_snapshot(index) if want_event else []
 
         way = self._find(index, tag)
         allocate = (op == "R") or cfg.write_allocate
@@ -571,7 +575,7 @@ class Cache:
                     mem_write = True
                     notes.append("write miss, no-write-allocate: word written to memory only")
 
-        after = self.set_snapshot(index)
+        after = self.set_snapshot(index) if want_event else []
         dirty_after = lines[way].dirty if way is not None else None
         ev = AccessEvent(
             step=st.accesses, op=op, address=f.address, fields=f.to_dict(),
@@ -579,7 +583,7 @@ class Cache:
             allocated=(way is not None and result != "HIT"), evicted=evicted,
             writeback=writeback, mem_read=mem_read, mem_write=mem_write,
             dirty_after=dirty_after, set_before=before, set_after=after,
-            victim_after=self.victim.snapshot() if cfg.victim_entries else [],
+            victim_after=self.victim.snapshot() if (cfg.victim_entries and want_event) else [],
             note="; ".join(notes),
         )
         ev.stats_after = self.stats.finalize(cfg)
@@ -589,8 +593,10 @@ class Cache:
         """Run a whole trace.  Keep at most ``keep_events`` detailed events (None = all)."""
         kept: List[AccessEvent] = []
         self.last_event = None
+        last = len(trace) - 1
         for i, (op, addr) in enumerate(trace):
-            ev = self.access(op, addr)
+            want = keep_events is None or i < keep_events or i == last
+            ev = self.access(op, addr, want)
             self.last_event = ev
             if keep_events is None or i < keep_events:
                 kept.append(ev)
@@ -612,6 +618,7 @@ def simulate(config: CacheConfig, trace: List[Tuple[str, int]],
         "events": [e.to_dict() for e in events],
         "total_accesses": len(trace),
         "truncated": keep_events is not None and len(trace) > keep_events,
+        "masked_addresses": sum(1 for _, a in trace if a >> config.address_bits),
         "final_state": cache.state(),
         "victim_state": cache.victim.snapshot() if config.victim_entries else [],
         "last_event": cache.last_event.to_dict() if cache.last_event else None,
