@@ -98,7 +98,12 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 def cmd_decode(a: argparse.Namespace) -> int:
     cfg = _config_from_args(a)
-    addr = int(a.address, 0)
+    try:
+        addr = int(a.address, 0)
+    except ValueError:
+        raise ValueError("not an address: %r (use decimal, 0x hex or 0b binary)" % a.address)
+    if addr < 0:
+        raise ValueError("address must not be negative: %r" % a.address)
     f = decode(cfg, addr)
     d = f.to_dict()
     if a.json:

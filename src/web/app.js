@@ -275,11 +275,17 @@ async function simulate(opts) {
     rebuildGrid();
     renderAll();
     setStatus(state.step >= max && max > 0 ? 'END' : 'IDLE', state.step >= max && max > 0 ? 'accent' : null);
+    return true;
   } catch (e) {
-    $('#configError').textContent = e.message;
-    $('#configError').hidden = false;
-    setStatus('ERROR', 'red');
-    renderGeometryOnly();
+    if (/^trace:/i.test(e.message)) {
+      toast(e.message, true);                   // a bad trace line: the caller keeps the previous trace
+    } else {
+      $('#configError').textContent = e.message;
+      $('#configError').hidden = false;
+      setStatus('ERROR', 'red');
+      renderGeometryOnly();
+    }
+    return false;
   }
 }
 
@@ -349,11 +355,15 @@ function startPlayback() {
   applyAnimSpeed();
   $('#btnPlay').classList.add('playing');
   setStatus('RUN', 'green');
+  let due = performance.now();
   const tick = () => {
     if (!state.playing) return;
     setStep(state.step + 1, true);
     if (atEnd()) { stopPlayback(); setStatus('END', 'accent'); return; }
-    state.timer = setTimeout(tick, 1000 / stepsPerSecond());
+    due += 1000 / stepsPerSecond();
+    const now = performance.now();
+    if (due < now - 250) due = now;             // fell far behind (hidden tab): resume at the rate, no burst
+    state.timer = setTimeout(tick, Math.max(0, due - now));
   };
   tick();
 }
@@ -927,17 +937,25 @@ async function loadPreset(name) {
   try {
     const t = await api('/api/traces/' + encodeURIComponent(name));
     state.presetCache[name] = t.text;
-    setTrace(t.text, name);
-    $$('.preset').forEach((b) => b.classList.toggle('active', b.dataset.name === name));
+    if (await setTrace(t.text, name)) $$('.preset').forEach((b) => b.classList.toggle('active', b.dataset.name === name));
   } catch (e) { toast(e.message, true); }
 }
-function setTrace(text, name) {
+// load a new trace; if the server rejects it (bad line) the previously loaded trace stays in place
+async function setTrace(text, name) {
+  const prev = { text: state.traceText, name: state.traceName, step: state.step };
   state.traceText = text;
   state.traceName = name;
   state.step = 0;
   logBuiltFor = null;
   $('#traceStatus').textContent = name;
-  simulate({ goto: 'start' });
+  if (await simulate({ goto: 'start' })) return true;
+  state.traceText = prev.text;
+  state.traceName = prev.name;
+  state.step = prev.step;
+  logBuiltFor = null;
+  $('#traceStatus').textContent = prev.name || 'none loaded';
+  if (prev.text.trim()) await simulate();
+  return false;
 }
 
 function buildGenerator() {
@@ -966,9 +984,10 @@ function buildGenerator() {
     if (ord) params.order = ord.dataset.v;
     try {
       const r = await api('/api/generate', { kind, params });
-      setTrace(r.text, `generated ${kind} (${r.count})`);
-      $$('.preset').forEach((b) => b.classList.remove('active'));
-      toast(`generated ${r.count} accesses`);
+      if (await setTrace(r.text, `generated ${kind} (${r.count})`)) {
+        $$('.preset').forEach((b) => b.classList.remove('active'));
+        toast(`generated ${r.count} accesses`);
+      }
     } catch (e) { toast(e.message, true); }
   });
 }
@@ -992,7 +1011,6 @@ function inject(op) {
   try { addr = Number(BigInt(v.startsWith('0x') || v.startsWith('0X') ? v : (/[a-fA-F]/.test(v) ? '0x' + v : v))); } catch (e) { toast('bad address', true); return; }
   if (!Number.isFinite(addr) || addr < 0) { toast('bad address', true); return; }
   state.traceText = state.traceText.replace(/\s*$/, '') + `\n${op} ${hex(addr, 8)}\n`;
-  state.traceName = state.traceName.replace(/ \+\d+$/, '') + (state.traceName.includes(' +') ? '' : '') ;
   const m = state.traceName.match(/^(.*) \+(\d+)$/);
   state.traceName = m ? `${m[1]} +${Number(m[2]) + 1}` : `${state.traceName} +1`;
   $('#traceStatus').textContent = state.traceName;
@@ -1133,6 +1151,8 @@ async function compareTraces() {
     }
     state.sweep = { rows, param: 'trace', series: '', trace: 'all presets', accesses: rows.reduce((a, r) => a + r.stats.accesses, 0) };
     SWEEP_LABELS.trace = 'TRACE';
+    state.hiddenSeries.clear();
+    state.sweepSort = null;
     renderSweep();
     $('#btnExportCsv').disabled = false;
   } catch (e) { toast(e.message, true); }
@@ -1360,16 +1380,15 @@ function wire() {
     $$('#traceTabs .tab').forEach((t) => t.classList.toggle('active', t === b));
     $$('#modTrace .tab-pane').forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
   });
-  $('#btnLoadPaste').addEventListener('click', () => {
+  $('#btnLoadPaste').addEventListener('click', async () => {
     const t = $('#pasteArea').value;
     if (!t.trim()) { toast('nothing to load', true); return; }
-    setTrace(t, 'pasted trace');
-    $$('.preset').forEach((b) => b.classList.remove('active'));
+    if (await setTrace(t, 'pasted trace')) $$('.preset').forEach((b) => b.classList.remove('active'));
   });
   $('#fileInput').addEventListener('change', (e) => {
     const f = e.target.files[0]; if (!f) return;
     const rd = new FileReader();
-    rd.onload = () => { $('#pasteArea').value = rd.result.length > 200000 ? rd.result.slice(0, 200000) + '\n# (preview truncated; full file loaded)' : rd.result; setTrace(rd.result, f.name); $$('.preset').forEach((b) => b.classList.remove('active')); };
+    rd.onload = () => { $('#pasteArea').value = rd.result.length > 200000 ? rd.result.slice(0, 200000) + '\n# (preview truncated; full file loaded)' : rd.result; setTrace(rd.result, f.name).then((ok) => { if (ok) $$('.preset').forEach((b) => b.classList.remove('active')); }); };
     rd.readAsText(f);
     e.target.value = '';
   });
