@@ -58,6 +58,17 @@ function toast(msg, isErr) {
   toastTimer = setTimeout(() => { t.hidden = true; }, isErr ? 4200 : 2200);
 }
 
+// palette for the canvases and the sweep chart, read once from the stylesheet tokens
+let themeCache = null;
+function theme() {
+  if (!themeCache) {
+    const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    themeCache = { amber: v('--amber'), green: v('--green'), red: v('--red'), blue: v('--blue'), violet: v('--violet'),
+      amberRgb: v('--amber-rgb'), greenRgb: v('--green-rgb'), lcd: v('--lcd'), text: v('--text'), muted: v('--muted'), dim: v('--dim'), hair: v('--hair-2') };
+  }
+  return themeCache;
+}
+
 function setStatus(txt, led) {
   $('#statusTxt').textContent = txt;
   const el = $('#statusLed');
@@ -607,10 +618,10 @@ function buildTraceBase() {
   base.width = Math.floor(w * dpr); base.height = Math.floor(h * dpr);
   const ctx = base.getContext('2d');
   ctx.scale(dpr, dpr);
-  ctx.fillStyle = '#0b0c0e'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = theme().lcd; ctx.fillRect(0, 0, w, h);
   const evs = state.sim.events, n = evs.length;
   if (n) {
-    const colors = { HIT: '#58D68D', MISS: '#E8584F', VICTIM: '#5DADE2' };
+    const colors = { HIT: theme().green, MISS: theme().red, VICTIM: theme().blue };
     const px = w / n;
     if (px >= 1.5) {
       for (let i = 0; i < n; i++) { ctx.fillStyle = colors[evs[i].result]; ctx.fillRect(i * px, 2, Math.max(1, px - 0.5), h - 4); }
@@ -685,16 +696,16 @@ function renderSpark() {
     for (let i = from; i < to; i++) { if (i === from) ctx.moveTo(X(i), Y(pts[i])); else ctx.lineTo(X(i), Y(pts[i])); }
     ctx.stroke();
   };
-  line(0, n, 'rgba(88,214,141,.18)', 1);                       // whole trace, faint
+  line(0, n, `rgba(${theme().greenRgb},.18)`, 1);                       // whole trace, faint
   if (done > 1) {
-    ctx.fillStyle = 'rgba(88,214,141,.12)'; ctx.beginPath(); ctx.moveTo(X(0), h - 4);
+    ctx.fillStyle = `rgba(${theme().greenRgb},.12)`; ctx.beginPath(); ctx.moveTo(X(0), h - 4);
     for (let i = 0; i < done; i++) ctx.lineTo(X(i), Y(pts[i]));
     ctx.lineTo(X(done - 1), h - 4); ctx.closePath(); ctx.fill();
   }
-  line(0, done, '#58D68D', 1.5);
+  line(0, done, theme().green, 1.5);
   if (done > 0) {
     const cx = X(done - 1), cy = Y(pts[done - 1]);
-    ctx.fillStyle = '#F5B942'; ctx.shadowColor = 'rgba(245,185,66,.8)'; ctx.shadowBlur = 6;
+    ctx.fillStyle = theme().amber; ctx.shadowColor = `rgba(${theme().amberRgb},.8)`; ctx.shadowBlur = 6;
     ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
   }
   val.textContent = done > 0 ? pts[done - 1].toFixed(3) : '—';
@@ -1011,7 +1022,7 @@ const METRIC_LABELS = {
   hit_ratio: 'HIT RATIO', miss_ratio: 'MISS RATIO', amat: 'AMAT', misstypes: 'MISS TYPES',
   traffic_kib: 'TRAFFIC', writebacks: 'WRITE-BACKS', mem_reads: 'MEM READS', mem_writes: 'MEM WRITES',
 };
-const COLORS = ['#F5B942', '#58D68D', '#5DADE2', '#E8584F', '#B388EB', '#F1948A', '#76D7C4'];
+const seriesColors = () => [theme().amber, theme().green, theme().blue, theme().red, theme().violet, '#E29A8E', '#78C8B6'];
 
 function buildExperimentControls() {
   const mk = (el, items, cur, onpick) => {
@@ -1059,7 +1070,7 @@ function renderSweep() {
     stacked = true; fmt = (v) => String(Math.round(v));
     const useSeries = seriesNames.length > 1 ? seriesNames[0] : '';
     series = ['compulsory', 'capacity', 'conflict'].map((k, i) => ({
-      name: k.toUpperCase(), color: ['#F5B942', '#B388EB', '#E8584F'][i],
+      name: k.toUpperCase(), color: [theme().amber, theme().violet, theme().red][i],
       values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === useSeries); return r && r.stats ? r.stats[k] : null; }),
     }));
     ylabel = 'MISSES' + (useSeries ? ' · ' + useSeries : '');
@@ -1067,7 +1078,7 @@ function renderSweep() {
     if (['writebacks', 'mem_reads', 'mem_writes'].includes(metric)) fmt = (v) => String(Math.round(v));
     if (metric === 'amat' || metric === 'traffic_kib') fmt = (v) => v.toFixed(2);
     series = seriesNames.map((s, i) => ({
-      name: s || METRIC_LABELS[metric], color: COLORS[i % COLORS.length],
+      name: s || METRIC_LABELS[metric], color: seriesColors()[i % 7],
       values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === s); return r && r.stats ? r.stats[metric] : null; }),
     }));
   }
@@ -1161,15 +1172,16 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel, xlab
   if (stacked) top = niceMax(Math.max(...cats.map((_, ci) => shown.reduce((a, s) => a + (s.values[ci] || 0), 0)), 0));
   else top = niceMax(Math.max(...shown.flatMap((s) => s.values.filter((v) => v !== null)), 0));
   const y = (v) => pt + ph - ph * Math.min(v, top) / top;
-  let o = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, Menlo, monospace" font-size="11">`;
-  o += `<text x="${pl}" y="22" fill="#F5B942" font-size="12" letter-spacing="2">${esc(title.toUpperCase())}</text>`;
-  o += `<text x="${pl}" y="38" fill="#7E8591" font-size="9.5">${esc(subtitle)}</text>`;
+  let o = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, Menlo, monospace" font-size="11">`;
+  const T = theme();
+  o += `<text x="${pl}" y="22" fill="${T.amber}" font-size="12" letter-spacing="1">${esc(title.toUpperCase())}</text>`;
+  o += `<text x="${pl}" y="38" fill="${T.muted}" font-size="9.5">${esc(subtitle)}</text>`;
   for (let i = 0; i <= 5; i++) {
     const yy = pt + ph - ph * i / 5, val = top * i / 5;
-    o += `<line x1="${pl}" y1="${yy}" x2="${pl + pw}" y2="${yy}" stroke="#2A2D34" stroke-dasharray="2 4"/>`;
-    o += `<text x="${pl - 8}" y="${yy}" fill="#7E8591" text-anchor="end" dominant-baseline="middle" font-size="10">${top > 1 ? +val.toFixed(2) : val.toFixed(2)}</text>`;
+    o += `<line x1="${pl}" y1="${yy}" x2="${pl + pw}" y2="${yy}" stroke="${T.hair}" stroke-dasharray="2 4"/>`;
+    o += `<text x="${pl - 8}" y="${yy}" fill="${T.muted}" text-anchor="end" dominant-baseline="middle" font-size="10">${top > 1 ? +val.toFixed(2) : val.toFixed(2)}</text>`;
   }
-  o += `<text x="14" y="${pt + ph / 2}" fill="#7E8591" font-size="9.5" transform="rotate(-90 14 ${pt + ph / 2})" text-anchor="middle" letter-spacing="1">${esc(ylabel)}</text>`;
+  o += `<text x="14" y="${pt + ph / 2}" fill="${T.muted}" font-size="9.5" transform="rotate(-90 14 ${pt + ph / 2})" text-anchor="middle" letter-spacing="1">${esc(ylabel)}</text>`;
   const gw = pw / Math.max(1, cats.length);
   const n = stacked ? 1 : Math.max(1, shown.length);
   const bw = Math.max(4, (gw * 0.7 - 3 * (n - 1)) / n);
@@ -1181,31 +1193,31 @@ function barChartSVG({ title, subtitle, cats, series, stacked, fmt, ylabel, xlab
         const v = s.values[ci]; if (v === null || v === undefined || s.hidden) return;
         const y0 = y(acc), y1 = y(acc + v);
         o += `<rect class="bar" data-ci="${ci}" data-si="${series.indexOf(s)}" x="${gx + (gw * 0.7 - bw) / 2}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1)}" fill="${s.color}" opacity=".9"/>`;
-        if (v > 0 && y0 - y1 > 12) o += `<text x="${gx + gw * 0.35}" y="${(y0 + y1) / 2}" fill="#0C0D0F" font-size="9.5" text-anchor="middle" dominant-baseline="middle">${fmt(v)}</text>`;
+        if (v > 0 && y0 - y1 > 12) o += `<text x="${gx + gw * 0.35}" y="${(y0 + y1) / 2}" fill="${T.lcd}" font-size="9.5" text-anchor="middle" dominant-baseline="middle">${fmt(v)}</text>`;
         acc += v;
       });
-      o += `<text x="${gx + gw * 0.35}" y="${y(acc) - 4}" fill="#C9CDD4" font-size="9.5" text-anchor="middle">${fmt(acc)}</text>`;
+      o += `<text x="${gx + gw * 0.35}" y="${y(acc) - 4}" fill="${T.text}" font-size="9.5" text-anchor="middle">${fmt(acc)}</text>`;
     } else {
       shown.forEach((s) => {
         const si = series.indexOf(s), v = s.values[ci];
         const x = gx + shown.indexOf(s) * (bw + 3);
-        if (v === null || v === undefined) { o += `<text x="${x + bw / 2}" y="${pt + ph - 6}" fill="#4C515B" font-size="9" text-anchor="middle">n/a</text>`; return; }
+        if (v === null || v === undefined) { o += `<text x="${x + bw / 2}" y="${pt + ph - 6}" fill="${T.dim}" font-size="9" text-anchor="middle">n/a</text>`; return; }
         o += `<rect class="bar" data-ci="${ci}" data-si="${si}" x="${x}" y="${Math.min(y(v), pt + ph - 2)}" width="${bw}" height="${Math.max(2, pt + ph - y(v))}" fill="${s.color}" opacity=".9"/>`;
         o += `<rect x="${x}" y="${y(v)}" width="${bw}" height="2" fill="#fff"/>`;
-        o += `<text x="${x + bw / 2}" y="${y(v) - 4}" fill="#C9CDD4" font-size="9" text-anchor="middle">${fmt(v)}</text>`;
+        o += `<text x="${x + bw / 2}" y="${y(v) - 4}" fill="${T.text}" font-size="9" text-anchor="middle">${fmt(v)}</text>`;
       });
     }
-    o += `<text x="${pl + ci * gw + gw / 2}" y="${pt + ph + 16}" fill="#C9CDD4" text-anchor="middle" font-size="10.5">${esc(c)}</text>`;
+    o += `<text x="${pl + ci * gw + gw / 2}" y="${pt + ph + 16}" fill="${T.text}" text-anchor="middle" font-size="10.5">${esc(c)}</text>`;
   });
-  o += `<line x1="${pl}" y1="${pt + ph}" x2="${pl + pw}" y2="${pt + ph}" stroke="#7E8591"/>`;
-  if (xlabel) o += `<text x="${pl + pw / 2}" y="${pt + ph + 34}" fill="#7E8591" font-size="9.5" text-anchor="middle" letter-spacing="1">${esc(xlabel)}</text>`;
+  o += `<line x1="${pl}" y1="${pt + ph}" x2="${pl + pw}" y2="${pt + ph}" stroke="${T.muted}"/>`;
+  if (xlabel) o += `<text x="${pl + pw / 2}" y="${pt + ph + 34}" fill="${T.muted}" font-size="9.5" text-anchor="middle" letter-spacing="1">${esc(xlabel)}</text>`;
   let lx = pl; const ly = H - 16;
   series.forEach((s) => {
     o += `<g class="legend-item${s.hidden ? ' off' : ''}" data-name="${esc(s.name)}"><rect x="${lx - 4}" y="${ly - 9}" width="${13 + 6.5 * s.name.length + 10}" height="18" fill="transparent"/>` +
-      `<circle cx="${lx + 4}" cy="${ly}" r="4" fill="${s.color}"/><text x="${lx + 13}" y="${ly}" fill="#C9CDD4" dominant-baseline="middle" font-size="10">${esc(s.name)}</text></g>`;
+      `<circle cx="${lx + 4}" cy="${ly}" r="4" fill="${s.color}"/><text x="${lx + 13}" y="${ly}" fill="${T.text}" dominant-baseline="middle" font-size="10">${esc(s.name)}</text></g>`;
     lx += 13 + 6.5 * s.name.length + 22;
   });
-  if (series.length > 1) o += `<text x="${W - pr}" y="${ly}" fill="#4C515B" font-size="9" text-anchor="end" dominant-baseline="middle">click a legend entry to hide / show it</text>`;
+  if (series.length > 1) o += `<text x="${W - pr}" y="${ly}" fill="${T.dim}" font-size="9" text-anchor="end" dominant-baseline="middle">click a legend entry to hide / show it</text>`;
   return o + '</svg>';
 }
 
