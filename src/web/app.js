@@ -31,6 +31,7 @@ const state = {
   sweepMetric: 'hit_ratio',
   sweepView: null,       // what the chart currently shows (for the hover tooltip)
   hiddenSeries: new Set(), // chart series switched off via the legend
+  arrayFocus: null,        // set index the detail window is centred on (large caches), null = follow the access
   presetCache: {},
 };
 
@@ -317,6 +318,7 @@ function rebuildGrid() {
 
 function setStep(n, fromPlay) {
   if (!state.sim) return;
+  state.arrayFocus = null;
   const max = maxStep();
   n = Math.max(0, Math.min(max, n));
   if (n === state.step && !fromPlay) return;
@@ -452,10 +454,11 @@ function bitsHTML(f) {
     grp('idx', f.index_binary, f.index_bits ? `INDEX · ${f.index_bits} b` : 'NO INDEX (FA)') +
     grp('off', f.offset_binary, `OFFSET · ${f.offset_bits} b`);
 }
-function fieldsHTML(f, g) {
+function fieldsHTML(f, g, e) {
+  const hit = e && e.result === 'HIT';
   return `
-    <div class="field"><span class="lbl">TAG</span><span class="lcd">${esc(f.tag_hex)}</span></div>
-    <div class="field"><span class="lbl">INDEX → SET</span><span class="lcd blue">${f.index} / ${g.num_sets}</span></div>
+    <div class="field"><span class="lbl">TAG${hit ? ' · MATCH' : ''}</span><span class="lcd${hit ? ' match' : ''}" id="tagLcd">${esc(f.tag_hex)}</span></div>
+    <div class="field"><span class="lbl">INDEX → SET</span><span class="lcd blue${e ? ' link' : ''}" id="idxLcd">${f.index} / ${g.num_sets}</span></div>
     <div class="field"><span class="lbl">OFFSET</span><span class="lcd green">${f.offset} (${hex(f.offset)})</span></div>
     <div class="field"><span class="lbl">BLOCK ADDRESS</span><span class="lcd dimmed">${f.block_address}</span></div>`;
 }
@@ -487,7 +490,7 @@ function renderDecode() {
   $('#resultBadge').outerHTML = badge ? badge.replace('class="result-badge', `class="result-badge${animBadge ? ' anim' : ''}`) : '<div class="result-badge" id="resultBadge"></div>';
   if (badge) $('.result-badge').id = 'resultBadge';
   $('#bitsOut').innerHTML = f ? bitsHTML(f) : bitsHTML({ tag_binary: '', index_binary: '', offset_binary: '', tag_bits: g.tag_bits, index_bits: g.index_bits, offset_bits: g.offset_bits });
-  $('#fieldsOut').innerHTML = f ? fieldsHTML(f, g) : '';
+  $('#fieldsOut').innerHTML = f ? fieldsHTML(f, g, probeActive ? null : e) : '';
   $('#noteOut').innerHTML = note;
 }
 
@@ -558,6 +561,41 @@ function renderBus(e, pulse) {
     note = parts.length ? parts.join(' · ') : 'no memory traffic';
   }
   $('#busNote').textContent = note;
+}
+
+
+/* ---- decode -> array connector: INDEX readout down the panel edge into the highlighted set ---- */
+function renderConnector() {
+  const svg = $('#connector');
+  if (!svg) return;
+  const e = currentEvent();
+  const idx = $('#idxLcd');
+  const row = e && !isEndSummary() ? $(`#arrayOut .set-row[data-set="${e.set_index}"]`) : null;
+  const probeActive = document.activeElement === $('#probeIn') && $('#probeIn').value.trim();
+  if (!e || !idx || !row || probeActive) { svg.innerHTML = ''; return; }
+  const body = $('#arrayOut').closest('.array-body');
+  const R = svg.getBoundingClientRect(), a = idx.getBoundingClientRect(), b = row.getBoundingClientRect(), v = body.getBoundingClientRect();
+  const label = row.querySelector('.set-label').getBoundingClientRect();
+  const rail = 5;                                   // runs along the left panel edge, never over content
+  const sx = a.left + a.width / 2 - R.left, sy = a.bottom - R.top;
+  const ex = label.left - R.left + 2;
+  let ey = b.top + b.height / 2 - R.top;
+  const vt = v.top - R.top, vb = v.bottom - R.top;
+  const visible = ey >= vt + 6 && ey <= vb - 6;
+  let d = `M${sx.toFixed(1)},${sy.toFixed(1)} V${(sy + 7).toFixed(1)} H${rail}`;
+  let out;
+  if (visible) {
+    d += ` V${ey.toFixed(1)} H${(ex - 8).toFixed(1)}`;
+    out = `<path d="${d}"/><path class="head" d="M${(ex - 8).toFixed(1)},${(ey - 4).toFixed(1)} l7,4 -7,4 z"/>`;
+  } else {
+    const cy = ey < vt ? vt + 6 : vb - 6;           // the set is scrolled out of the window: point at the edge
+    d += ` V${cy.toFixed(1)}`;
+    out = `<path d="${d}"/><path class="head" d="M${rail - 4},${(ey < vt ? cy + 6 : cy - 6).toFixed(1)} l4,${ey < vt ? -6 : 6} 4,${ey < vt ? 6 : -6} z"/>`;
+  }
+  const txt = `SET ${e.set_index}`;
+  const lx = rail + 8, ly = sy + 7 + 12;
+  out += `<rect class="lblbg" x="${lx - 4}" y="${ly - 9}" width="${txt.length * 6.3 + 8}" height="13" rx="2"/><text x="${lx}" y="${ly + 1}">${txt}</text>`;
+  svg.innerHTML = out;
 }
 
 /* ---- trace timeline (top strip) ---- */
@@ -682,18 +720,20 @@ function renderArray() {
     rows = Array.from({ length: g.num_sets }, (_, i) => i);
     $('#heatStrip').hidden = true;
   } else {
-    const center = curSet >= 0 ? curSet : 0;
+    const center = state.arrayFocus !== null ? state.arrayFocus : (curSet >= 0 ? curSet : 0);
     const start = Math.max(0, Math.min(center - 3, g.num_sets - 8));
     rows = Array.from({ length: 8 }, (_, i) => start + i);
     const heat = $('#heatStrip');
     heat.hidden = false;
     heat.innerHTML = `<span class="heat-title">SET ACTIVITY MAP · ${g.num_sets} SETS · ONE SQUARE PER SET · DETAIL WINDOW SHOWS SETS ${start}–${start + 7}</span>` +
-      state.heat.map((h, i) => `<i class="${h}${i === curSet ? ' cur' : ''}" title="set ${i}"></i>`).join('');
+      state.heat.map((h, i) => `<i class="${h}${i === curSet ? ' cur' : ''}" data-set="${i}" title="set ${i} — click to show it in the detail window"></i>`).join('');
   }
   const rowsKey = `${rows[0]}:${rows.length}:${g.ways}`;
   if (arrayView.sim !== state.sim || arrayView.rowsKey !== rowsKey) {
-    out.innerHTML = (g.num_sets > FULL_GRID_MAX_SETS ? `<div class="window-note">DETAIL WINDOW · SETS ${rows[0]}–${rows[rows.length - 1]} OF ${g.num_sets}</div>` : '') +
-      rows.map((s) => `<div class="set-row" data-set="${s}"><span class="set-label">SET ${s}</span>${state.grid[s].map((line, w) => cellHTML(line, g.ways, w)).join('')}</div>`).join('');
+    out.innerHTML = (g.num_sets > FULL_GRID_MAX_SETS ? `<div class="window-note">DETAIL WINDOW · SETS ${rows[0]}–${rows[rows.length - 1]} OF ${g.num_sets}<input class="lcd-input jump" id="jumpSet" type="number" min="0" max="${g.num_sets - 1}" placeholder="go to set" title="Centre the detail window on a set (Enter)"></div>` : '') +
+      rows.map((s, k) => `<div class="set-row${k % 2 ? ' alt' : ''}" data-set="${s}"><span class="set-label">SET ${s}</span>${state.grid[s].map((line, w) => cellHTML(line, g.ways, w)).join('')}</div>`).join('');
+    const jump = $('#jumpSet');
+    if (jump) jump.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { state.arrayFocus = Math.max(0, Math.min(g.num_sets - 1, Number(jump.value) || 0)); renderArray(); } ev.stopPropagation(); });
     arrayView.sim = state.sim; arrayView.rowsKey = rowsKey;
     const wh = $('#wayHead');
     wh.hidden = false;
@@ -712,6 +752,7 @@ function renderArray() {
       cell.classList.toggle('hitcell', touched && resultCls === 'hitcell');
       cell.classList.toggle('misscell', touched && resultCls === 'misscell');
       cell.classList.toggle('victimcell', touched && resultCls === 'victimcell');
+      cell.classList.toggle('tagmatch', touched && resultCls === 'hitcell');
     });
     let note = row.querySelector('.row-note');
     const evText = isCur && e && e.evicted ? `evicted ${hex(e.evicted.tag)}${e.evicted.dirty ? ' (dirty' + (e.evicted.writeback ? ', written back' : (e.evicted.to_victim ? ', to victim cache' : '')) + ')' : (e.evicted.to_victim ? ' (to victim cache)' : '')}` : '';
@@ -745,6 +786,7 @@ function renderArray() {
     revealIn(out.closest('.array-body'), row, !(state.playing && stepsPerSecond() > 10));
   }
   arrayView.lastStep = state.step;
+  renderConnector();
   // victim cache strip
   const vc = $('#victimOut');
   if (g.victim_entries) {
@@ -1282,6 +1324,9 @@ function wire() {
   $('#btnExportCsv').addEventListener('click', exportCsv);
   $('#sweepMetric').addEventListener('click', () => { if (state.sweep) renderSweep(); });
   $('#logFilter').addEventListener('input', applyLogFilter);
+  $('#heatStrip').addEventListener('click', (e) => { const i = e.target.closest('i[data-set]'); if (i) { state.arrayFocus = Number(i.dataset.set); renderArray(); } });
+  $('#arrayOut').closest('.array-body').addEventListener('scroll', () => renderConnector(), { passive: true });
+  new ResizeObserver(() => renderConnector()).observe($('.rack-center'));
   $('#logOut').addEventListener('click', (e) => { const r = e.target.closest('.log-row'); if (r) { stopPlayback(); setStep(Number(r.dataset.i)); } });
 }
 
