@@ -849,7 +849,8 @@ const COUNTER_GROUPS = [
   ['ACCESSES', [['accesses', 'TOTAL', ''], ['reads', 'READS', 'blue'], ['writes', 'WRITES', 'violet'],
                 ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'], ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', '']]],
   ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'accent'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
-  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'accent']]],
+  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'accent'],
+              ['dirty_lines', 'DIRTY · UNFLUSHED', '']]],
 ];
 function renderCounters() {
   const s = currentStats();
@@ -870,7 +871,8 @@ function renderCounters() {
   const grid = $('#counterGrid');
   if (!grid.firstChild) {
     const item = ([k, l, c]) => `<div class="ctr ${c}" data-k="${k}"><span class="lbl">${l}</span><span class="val ${c}"><span class="n">0</span></span></div>`;
-    const traffic = `<div class="ctr" data-k="traffic"><span class="lbl">TRAFFIC</span><span class="val"><span class="n">0.00 KiB</span></span></div>`;
+    const traffic = `<div class="ctr" data-k="traffic"><span class="lbl">TRAFFIC</span><span class="val"><span class="n">0.00 KiB</span></span></div>` +
+      `<div class="ctr" data-k="trafficFlushed" title="traffic if every dirty line were written back now"><span class="lbl">TRAFFIC + FLUSH</span><span class="val"><span class="n">0.00 KiB</span></span></div>`;
     grid.innerHTML = COUNTER_GROUPS.map(([title, items], gi) =>
       `<div class="ctr-group"><h5>${title}</h5><div class="ctr-list">${items.map(item).join('')}${gi === COUNTER_GROUPS.length - 1 ? traffic : ''}</div></div>`).join('');
   }
@@ -890,6 +892,7 @@ function renderCounters() {
   }
   setCtr(grid.querySelector('.ctr[data-k="traffic"]'), `${s ? s.traffic_kib.toFixed(2) : '0.00'} KiB`, 0,
     s && !isEndSummary() && s.traffic_bytes > (prev ? prev.traffic_bytes : 0) ? `+${s.traffic_bytes - (prev ? prev.traffic_bytes : 0)} B` : '');
+  setCtr(grid.querySelector('.ctr[data-k="trafficFlushed"]'), `${s ? s.traffic_flushed_kib.toFixed(2) : '0.00'} KiB`, 0, '');
   $('#countersSub').textContent = isEndSummary() ? 'final · whole trace' : (state.sim ? `after step ${state.step}` : 'at current step');
   renderSpark();
 }
@@ -1066,6 +1069,7 @@ const SWEEP_LABELS = {
 const METRIC_LABELS = {
   hit_ratio: 'HIT RATIO', miss_ratio: 'MISS RATIO', amat: 'AMAT', misstypes: 'MISS TYPES',
   traffic_kib: 'TRAFFIC', writebacks: 'WRITE-BACKS', mem_reads: 'MEM READS', mem_writes: 'MEM WRITES',
+  traffic_flushed_kib: 'TRAFFIC + FLUSH',
 };
 const seriesColors = () => [theme().accent, theme().green, theme().blue, theme().red, theme().violet, '#E29A8E', '#78C8B6'];
 
@@ -1120,8 +1124,8 @@ function renderSweep() {
     }));
     ylabel = 'MISSES' + (useSeries ? ' · ' + useSeries : '');
   } else {
-    if (['writebacks', 'mem_reads', 'mem_writes'].includes(metric)) fmt = (v) => String(Math.round(v));
-    if (metric === 'amat' || metric === 'traffic_kib') fmt = (v) => v.toFixed(2);
+    if (['writebacks', 'mem_reads', 'mem_writes', 'dirty_lines', 'mem_writes_flushed'].includes(metric)) fmt = (v) => String(Math.round(v));
+    if (metric === 'amat' || metric === 'traffic_kib' || metric === 'traffic_flushed_kib') fmt = (v) => v.toFixed(2);
     series = seriesNames.map((s, i) => ({
       name: s || METRIC_LABELS[metric], color: seriesColors()[i % 7],
       values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === s); return r && r.stats ? r.stats[metric] : null; }),

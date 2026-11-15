@@ -17,12 +17,12 @@ every chart is in `results/`, every screenshot comes from the live GUI.
 | 8 | Write policies | 2×2 table WB/WT × WA/NWA; what each costs in memory traffic | 1.5 min |
 | 9 | 3C miss classification | Compulsory / capacity / conflict definitions; the shadow FA cache trick | 1.5 min. "Conflict misses are exactly what more ways can remove." |
 | 10 | **Live demo** | Textbook example stepped in the GUI (`data/textbook_dm.trace`, 32 B DM) | 3 min. Show M M H H M M H M matching the textbook. |
-| 11 | Verification | Hand-worked examples → 46 unit tests; the victim-cache hand error we caught | 1 min |
+| 11 | Verification | Hand-worked examples → 55 unit tests; the victim-cache hand error we caught | 1 min |
 | 12 | Trace generator | Six patterns and what each isolates (table) | 1 min |
 | 13 | Result: associativity × policy | `fig1_assoc_vs_policy_conflict.svg` | 1.5 min. RANDOM beats LRU at 2-way here — ask why. |
 | 14 | Result: block size | `fig2_block_size_vs_trace.svg` — sequential halves per doubling; column-major stuck at 1.0 | 1.5 min. Loop order matters: 768 conflict misses. |
 | 15 | Result: cache size | `fig3_cache_size_miss_types_loop_large.svg` — the working-set step | 1 min |
-| 16 | Result: write policy & victim cache | `fig4_write_policy_traffic_loop.svg` + `fig5_victim_cache_amat.svg` | 1.5 min. WT same hit ratio, 2.5× traffic; VC 101 → 9.1 cycles. |
+| 16 | Result: write policy & victim cache | `fig4_write_policy_traffic_loop.svg` + `fig5_victim_cache_amat.svg` | 1.5 min. WT same hit ratio, 188 memory writes vs 32 and 1.23× the traffic (final flush included); VC 101 → 9.1 cycles. |
 | 17 | Extensions & limits | Victim cache, real traces via Valgrind; not modelled: data, timing of DRAM, multi-level | 1 min |
 | 18 | Summary | One line per deliverable; what we learned; Q&A | 1 min |
 

@@ -170,6 +170,21 @@ class TestMissClassification(unittest.TestCase):
         self.assertEqual(pattern(ev), "MHHHMHHH")
 
 
+    def test_fully_associative_lru_never_reports_conflict_but_fifo_can(self):
+        # 4 lines, blocks 0 1 2 3, re-use 0, bring in 4, then 0 again.
+        # LRU evicts 1 for block 4, so the last access hits.  FIFO evicts 0 (oldest fill),
+        # so the last access misses although the LRU shadow cache still holds block 0:
+        # that miss is reported as "conflict" even though the cache is fully associative.
+        blocks = [0, 1, 2, 3, 0, 4, 0]
+        lru, _ = run_blocks(CacheConfig(cache_size=64, block_size=16, associativity=0, replacement="LRU"), blocks)
+        self.assertEqual(lru.stats.conflict, 0)
+        self.assertEqual(lru.stats.misses, 5)
+        fifo, ev = run_blocks(CacheConfig(cache_size=64, block_size=16, associativity=0, replacement="FIFO"), blocks)
+        self.assertEqual(ev[-1].result, "MISS")
+        self.assertEqual(ev[-1].miss_type, "conflict")
+        self.assertEqual(fifo.stats.conflict, 1)
+
+
 class TestWritePolicies(unittest.TestCase):
     def test_write_back_marks_dirty_and_writes_back_on_eviction(self):
         cfg = CacheConfig(cache_size=64, block_size=16, associativity=1, write_policy="WB")
@@ -219,6 +234,41 @@ class TestWritePolicies(unittest.TestCase):
         s = cache.stats
         self.assertEqual((s.reads, s.writes), (3, 2))
         self.assertEqual((s.read_hits, s.read_misses, s.write_hits, s.write_misses), (2, 1, 1, 1))
+
+
+    def test_dirty_lines_left_at_end_are_charged_by_the_flushed_totals(self):
+        # W 0, W 16: two dirty lines, nothing evicted -> no memory write during the trace,
+        # but the cache still owes memory two block writes.
+        cfg = CacheConfig(cache_size=64, block_size=16, associativity=1, write_policy="WB")
+        cache = Cache(cfg)
+        cache.run([("W", 0), ("W", 16), ("W", 4)])
+        r = cache.results()
+        self.assertEqual(r["mem_writes"], 0)
+        self.assertEqual(r["traffic_bytes"], 16 * 2)                  # 2 fetches
+        self.assertEqual(r["dirty_lines"], 2)
+        self.assertEqual(r["mem_writes_flushed"], 2)
+        self.assertEqual(r["traffic_flushed_bytes"], 16 * 2 + 16 * 2)  # + 2 block write-backs
+
+    def test_write_through_has_nothing_to_flush(self):
+        cfg = CacheConfig(cache_size=64, block_size=16, associativity=1, write_policy="WT")
+        cache = Cache(cfg)
+        cache.run([("W", 0), ("W", 16), ("W", 4)])
+        r = cache.results()
+        self.assertEqual(r["dirty_lines"], 0)
+        self.assertEqual(r["mem_writes_flushed"], r["mem_writes"])
+        self.assertEqual(r["traffic_flushed_bytes"], r["traffic_bytes"])
+
+    def test_dirty_line_counter_matches_the_cache_contents(self):
+        from cachesim import generate
+        for victim in (0, 2):
+            for allocate in (True, False):
+                for repl in ("LRU", "FIFO", "RANDOM"):
+                    cfg = CacheConfig(cache_size=128, block_size=16, associativity=2, replacement=repl,
+                                      write_policy="WB", write_allocate=allocate, victim_entries=victim)
+                    cache = Cache(cfg)
+                    for op, addr in generate("random", count=400, range_bytes=1024, write_ratio=0.4, seed=7):
+                        cache.access(op, addr, want_event=False)
+                        self.assertEqual(cache.stats.dirty_lines, cache.count_dirty())
 
 
 class TestVictimCache(unittest.TestCase):

@@ -177,6 +177,60 @@ class TestRobustness(unittest.TestCase):
                                                   "trace": "R 0x12340\nR 0x40\n", "event_limit": 10})
         self.assertEqual(r["masked_addresses"], 1)
 
+    def test_api_rejects_malformed_requests_with_a_400(self):
+        bad = [
+            ("/api/simulate", ["not", "an", "object"]),
+            ("/api/simulate", {"config": [1, 2], "trace": "R 0"}),
+            ("/api/simulate", {"config": {}, "trace": 5}),
+            ("/api/simulate", {"config": {}, "trace": "R 0", "event_limit": "many"}),
+            ("/api/simulate", {"config": {"cache_size": "big"}, "trace": "R 0"}),
+            ("/api/simulate", {"config": {"associativity": "abc"}, "trace": "R 0"}),
+            ("/api/sweep", {"config": {}, "trace": "R 0", "param": "associativity", "values": 4}),
+            ("/api/sweep", {"config": {}, "trace": "R 0", "param": "associativity", "values": [None]}),
+            ("/api/generate", {"kind": "loop", "params": [1]}),
+        ]
+        for path, body in bad:
+            with self.assertRaises(ApiError, msg="%s %r" % (path, body)) as ctx:
+                handle_api("POST", path, body)
+            self.assertEqual(ctx.exception.status, 400)
+
+
+class TestCliMessages(unittest.TestCase):
+    def _run(self, *argv):
+        import contextlib
+        import io
+        from cachesim.cli import main
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_bad_associativity_is_explained(self):
+        code, _, err = self._run("decode", "0x10", "--assoc", "abc")
+        self.assertEqual(code, 2)
+        self.assertIn("associativity must be a number of ways or 'full'", err)
+
+    def test_decode_says_when_an_address_is_too_wide(self):
+        code, out, _ = self._run("decode", "0x1FF", "--size", "64", "--block", "16", "--addr-bits", "8")
+        self.assertEqual(code, 0)
+        self.assertIn("address 0xFF", out)
+        self.assertIn("wider than 8 bits", out)
+        code, out, _ = self._run("decode", "0xFF", "--size", "64", "--block", "16", "--addr-bits", "8")
+        self.assertNotIn("wider than", out)
+
+    def test_decode_with_no_tag_bits_prints_a_dash(self):
+        code, out, _ = self._run("decode", "0xAB", "--size", "256", "--block", "16", "--addr-bits", "8")
+        self.assertEqual(code, 0)
+        self.assertIn("binary : - 1010 1011", out)
+
+    def test_run_reports_masked_addresses_and_the_final_flush(self):
+        code, out, _ = self._run("run", "--gen", "sequential", "start=65536", "count=4", "write_ratio=1",
+                                 "--size", "64", "--addr-bits", "16")
+        self.assertEqual(code, 0)
+        self.assertIn("4 addresses are wider than 16 bits", out)
+        self.assertIn("1 dirty lines still cached", out)
+
+
 
 if __name__ == "__main__":
     unittest.main()

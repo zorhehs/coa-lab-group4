@@ -57,7 +57,7 @@ coa-lab-group4/
 │   │   ├── cli.py               run · decode · gen · sweep · serve
 │   │   └── server.py            stdlib HTTP server + JSON API for the GUI
 │   └── web/                     index.html · style.css · app.js  (the GUI)
-├── tests/                       46 unit tests checked against hand-worked examples
+├── tests/                       55 unit tests checked against hand-worked examples
 ├── docs/                        design.md · hand_worked_examples.md · report.md · slides.md · demo_script.md
 ├── results/                     figures (SVG), CSV tables and summary.md from scripts/experiments.py
 ├── scripts/                     run_demo.sh · generate_traces.sh · experiments.py
@@ -150,7 +150,8 @@ accounting, the victim cache, trace parsing, generators, sweeps, charts and the 
 
 Hit ratio, miss ratio, read / write miss ratios, misses by type (compulsory, capacity,
 conflict — Hill's 3C model with a shadow fully-associative LRU cache), memory reads /
-writes / write-backs, memory traffic in bytes, victim-cache hits, and AMAT
+writes / write-backs, memory traffic in bytes (with and without the final flush of dirty
+lines), dirty lines left in the cache, victim-cache hits, and AMAT
 (`hit_time + memory_miss_ratio × miss_penalty + victim_hit_ratio × victim_penalty`).
 
 ## 8. License

@@ -92,6 +92,13 @@ def cmd_run(a: argparse.Namespace) -> int:
           % (res["compulsory"], res["capacity"], res["conflict"]))
     print("  memory: reads %d  writes %d  write-backs %d  traffic %.2f KiB  victim hits %d"
           % (res["mem_reads"], res["mem_writes"], res["writebacks"], res["traffic_kib"], res["victim_hits"]))
+    if res["dirty_lines"]:
+        print("  end of trace: %d dirty lines still cached; flushing them -> writes %d  traffic %.2f KiB"
+              % (res["dirty_lines"], res["mem_writes_flushed"], res["traffic_flushed_kib"]))
+    masked = sum(1 for _, addr in trace if addr >> cfg.address_bits)
+    if masked:
+        print("  note: %d address%s wider than %d bits; the upper bits were ignored"
+              % (masked, " is" if masked == 1 else "es are", cfg.address_bits))
     print("  AMAT = %.3f cycles (hit %.1f, penalty %.1f)" % (res["amat"], cfg.hit_time, cfg.miss_penalty))
     return 0
 
@@ -110,7 +117,9 @@ def cmd_decode(a: argparse.Namespace) -> int:
         print(json.dumps(d, indent=2))
         return 0
     print("address %s  (%d-bit)" % (d["hex"], cfg.address_bits))
-    print("  binary : %s %s %s" % (d["tag_binary"], d["index_binary"] or "-", d["offset_binary"]))
+    if addr >> cfg.address_bits:
+        print("  note   : %s is wider than %d bits; the upper bits were ignored" % (a.address, cfg.address_bits))
+    print("  binary : %s %s %s" % (d["tag_binary"] or "-", d["index_binary"] or "-", d["offset_binary"] or "-"))
     print("  tag    : %s  (%d bits)" % (d["tag_hex"], cfg.tag_bits))
     print("  index  : %d  (%d bits) -> set %d of %d" % (f.index, cfg.index_bits, f.index, cfg.num_sets))
     print("  offset : %d  (%d bits)" % (f.offset, cfg.offset_bits))

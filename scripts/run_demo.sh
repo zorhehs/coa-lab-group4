@@ -30,7 +30,7 @@ $PY -m cachesim sweep --trace data/conflict.trace --param associativity --values
 
 hr "6. Write-back vs write-through memory traffic on the loop trace (25% writes)"
 $PY -m cachesim sweep --trace data/loop.trace --assoc 4 --param write_policy --values WB,WT \
-    --series write_allocate --series-values 1,0 --metric traffic_kib
+    --series write_allocate --series-values 1,0 --metric traffic_flushed_kib
 
 hr "7. Victim cache extension on a direct-mapped cache"
 $PY -m cachesim sweep --trace data/conflict.trace --assoc 1 --param victim_entries --values 0,2,4,8 --metric amat

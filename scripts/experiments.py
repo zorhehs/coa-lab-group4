@@ -118,16 +118,20 @@ summary += ["## 3. Cache size vs miss type, loop_large (2 KiB working set)", "",
 # ------------------------------------------------------------------ #
 trace = load("loop.trace")
 rows = sweep(CacheConfig(cache_size=1024, block_size=16, associativity=4), trace, "write_policy", ["WB", "WT"], "write_allocate", [True, False])
-cats, ser_w = series_from_rows(rows, "mem_writes")
-_, ser_t = series_from_rows(rows, "traffic_kib")
+# totals include the final flush of dirty lines, so write-back is charged for every block it still owes memory
+cats, ser_w = series_from_rows(rows, "mem_writes_flushed")
+_, ser_t = series_from_rows(rows, "traffic_flushed_kib")
 write("fig4_write_policy_mem_writes_loop.svg", bar_chart_svg("Memory write operations by write policy (loop)", cats, ser_w,
-      ylabel="memory writes", value_fmt="{:.0f}", subtitle="1 KiB, 4-way LRU; 768 accesses, 25% writes; series = write-allocate / no-write-allocate"))
+      ylabel="memory writes", value_fmt="{:.0f}", subtitle="1 KiB, 4-way LRU; 768 accesses, 25% writes, incl. final flush; series = write-allocate / no-write-allocate"))
 write("fig4_write_policy_traffic_loop.svg", bar_chart_svg("Memory traffic by write policy (loop)", cats, ser_t,
-      ylabel="KiB", value_fmt="{:.2f}", subtitle="block fetches + write-backs (WB) or word writes (WT)"))
+      ylabel="KiB", value_fmt="{:.2f}", subtitle="block fetches + write-backs incl. final flush of dirty lines (WB) or word writes (WT)"))
 write("fig4_write_policy_loop.csv", rows_to_csv(rows))
 summary += ["## 4. Write policy x allocation, loop trace (25% writes)", "",
-            "`python -m cachesim sweep --trace data/loop.trace --assoc 4 --param write_policy --values WB,WT --series write_allocate --series-values 1,0 --metric mem_writes`", "",
-            md_table(rows, ["hit_ratio", "write_misses", "writebacks", "mem_reads", "mem_writes", "traffic_kib"]), ""]
+            "`python -m cachesim sweep --trace data/loop.trace --assoc 4 --param write_policy --values WB,WT --series write_allocate --series-values 1,0 --metric traffic_flushed_kib`", "",
+            md_table(rows, ["hit_ratio", "write_misses", "writebacks", "mem_reads", "mem_writes", "traffic_kib",
+                            "dirty_lines", "mem_writes_flushed", "traffic_flushed_kib"]), "",
+            "`mem_writes` and `traffic_kib` count what happened during the trace. `dirty_lines` is what a write-back",
+            "cache still holds at the end; the `*_flushed` columns add one block write for each of them.", ""]
 
 # ------------------------------------------------------------------ #
 # 5. Victim cache extension on strided + conflict traces (direct mapped)

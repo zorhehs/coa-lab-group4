@@ -34,6 +34,9 @@ METRICS = {
     "mem_reads": "Memory reads",
     "mem_writes": "Memory writes",
     "traffic_kib": "Memory traffic (KiB)",
+    "dirty_lines": "Dirty lines left in cache",
+    "mem_writes_flushed": "Memory writes incl. final flush",
+    "traffic_flushed_kib": "Memory traffic incl. final flush (KiB)",
 }
 
 

@@ -640,10 +640,10 @@ def build_slides():
 
     # 8 write policies
     s = new_slide("Write policies", "write-back vs write-through × write-allocate vs no-write-allocate",
-                  "1.5 min. Hit ratio is the same for write-back and write-through; the difference is memory traffic. On the loop trace write-through sends all 188 writes to memory, write-back sends none because nothing dirty is ever evicted. No-write-allocate lowers the hit ratio instead, because written lines are not brought in for later reads.")
-    cells = [("WRITE-BACK · WRITE-ALLOCATE", "dirty bit on write hit; whole block written back on eviction; write miss fetches the block", "0 memory writes · 0.50 KiB", "green"),
+                  "1.5 min. Hit ratio is the same for write-back and write-through; the difference is memory traffic. On the loop trace write-through sends all 188 writes to memory one word at a time; write-back sends none during the run because nothing dirty is evicted, and writes its 32 dirty blocks once when they are flushed at the end. No-write-allocate lowers the hit ratio instead, because written lines are not brought in for later reads.")
+    cells = [("WRITE-BACK · WRITE-ALLOCATE", "dirty bit on write hit; whole block written back on eviction; write miss fetches the block", "32 block writes at flush · 1.00 KiB", "green"),
              ("WRITE-THROUGH · WRITE-ALLOCATE", "every write goes to memory immediately; never any dirty lines", "188 memory writes · 1.23 KiB", "red"),
-             ("WRITE-BACK · NO-WRITE-ALLOCATE", "write miss writes the word around the cache; nothing allocated", "17 memory writes · hit ratio 0.936", "amber"),
+             ("WRITE-BACK · NO-WRITE-ALLOCATE", "write miss writes the word around the cache; nothing allocated", "49 memory writes · hit ratio 0.936", "amber"),
              ("WRITE-THROUGH · NO-WRITE-ALLOCATE", "the simplest hardware; the most bandwidth", "188 memory writes · hit ratio 0.936", "red")]
     for k, (name, desc, num, col) in enumerate(cells):
         x = Inches(0.5) + (k % 2) * Inches(6.2); y = Inches(1.55) + (k // 2) * Inches(2.45)
@@ -654,7 +654,7 @@ def build_slides():
 
     # 9 3C
     s = new_slide("3C miss classification", "compulsory · capacity · conflict — decided per miss with a shadow fully-associative cache",
-                  "1.5 min. \"Conflict misses are exactly what more ways can remove.\" The shadow cache has the same number of lines but no mapping restriction; if it would also have missed, the miss is capacity, otherwise the mapping caused it. Invariant: a fully-associative cache never reports conflict misses.")
+                  "1.5 min. \"Conflict misses are exactly what more ways can remove.\" The shadow cache has the same number of lines but no mapping restriction; if it would also have missed, the miss is capacity, otherwise the mapping caused it. Invariant: a fully-associative LRU cache never reports conflict misses.")
     defs = [("compulsory", "amber", "the block has never been in the cache (infinite-cache definition)"),
             ("capacity", "violet", "a fully-associative cache of the same size would also miss — the working set is too big"),
             ("conflict", "red", "only the mapping caused it: too many live blocks fell into one set")]
@@ -672,7 +672,7 @@ def build_slides():
         text(s, x, yy + Inches(0.15), Inches(3.6), Inches(0.6), q, size=14, color="muted", font=MONO, align=PP_ALIGN.CENTER)
         text(s, x, yy + Inches(0.7), Inches(3.6), Inches(0.7), "→ " + a.upper(), size=20, color=col, font=MONO, bold=True, align=PP_ALIGN.CENTER)
         x += Inches(4.0)
-    text(s, Inches(0.8), yy + Inches(1.65), Inches(11.5), Inches(0.4), "invariant: a fully-associative cache never reports conflict misses; the conflict count is precisely what extra associativity can remove", size=12, color="amber", font=MONO)
+    text(s, Inches(0.8), yy + Inches(1.65), Inches(11.5), Inches(0.4), "invariant: a fully-associative LRU cache never reports conflict misses; the conflict count is precisely what extra associativity can remove", size=12, color="amber", font=MONO)
 
     # 10 live demo
     s = new_slide("Live demo", "the textbook direct-mapped example, stepped in the GUI",
@@ -688,9 +688,9 @@ def build_slides():
         "sweep X = ASSOC, SERIES = REPL"], size=13, gap=8)
 
     # 11 verification
-    s = new_slide("Verification", "hand-worked examples first, then 39 unit tests that reproduce them",
+    s = new_slide("Verification", "hand-worked examples first, then 55 unit tests that reproduce them",
                   "1 min. Every expected value was worked by hand before it became a test. Tell the victim-cache story: while writing that test we mis-traced which block was dirty after a swap; the simulator's per-access log showed the real sequence and the hand analysis was corrected — the tool doing what it is for.")
-    lcd(s, Inches(0.5), Inches(1.6), Inches(2.6), Inches(1.5), "39 / 39", "unit tests passing", "green", vsize=30)
+    lcd(s, Inches(0.5), Inches(1.6), Inches(2.6), Inches(1.5), "55 / 55", "unit tests passing", "green", vsize=30)
     lcd(s, Inches(3.3), Inches(1.6), Inches(2.6), Inches(1.5), "8", "hand-worked cases", "amber", vsize=30)
     table(s, Inches(0.5), Inches(3.35), Inches(5.4), ["hand-worked case", "expected", "✓"], [
         ["H&P direct-mapped sequence", "M M H H M M H M · 0.375", "✓"],
@@ -741,11 +741,11 @@ def build_slides():
 
     # 16 write policy + victim cache
     s = new_slide("Result: write policy & victim cache", "bandwidth, not hit ratio — and a two-entry buffer that rescues a thrashing cache",
-                  "1.5 min. Left: write-through has the same hit ratio as write-back but 2.5× the memory traffic (1.23 KiB vs 0.50 KiB) because all 188 writes go to memory. Right: a two-entry victim cache catches all 45 conflict misses of the thrashing trace and brings AMAT from 101 to 9.1 cycles, while the strided trace, which never revisits a block, gains nothing.")
+                  "1.5 min. Left: write-through has the same hit ratio as write-back but 1.23× the memory traffic (1.23 KiB vs 1.00 KiB, final flush of dirty lines included) and almost six times the memory writes, because all 188 writes go to memory one by one. Right: a two-entry victim cache catches all 45 conflict misses of the thrashing trace and brings AMAT from 101 to 9.1 cycles, while the strided trace, which never revisits a block, gains nothing.")
     image(s, png("fig4_write_policy_traffic_loop"), Inches(0.5), Inches(1.5), Inches(6.1), Inches(3.6))
     image(s, png("fig5_victim_cache_amat"), Inches(6.75), Inches(1.5), Inches(6.1), Inches(3.6))
-    lcd(s, Inches(0.7), Inches(5.3), Inches(2.7), Inches(1.3), "2.5×", "WT traffic vs WB", "red", vsize=28)
-    text(s, Inches(3.6), Inches(5.5), Inches(2.9), Inches(1.1), "same hit ratio 0.958 — 188 word writes vs 0 write-backs", size=13, color="text", anchor=MSO_ANCHOR.MIDDLE)
+    lcd(s, Inches(0.7), Inches(5.3), Inches(2.7), Inches(1.3), "1.23×", "WT traffic vs WB", "red", vsize=28)
+    text(s, Inches(3.6), Inches(5.5), Inches(2.9), Inches(1.1), "same hit ratio 0.958 — 188 word writes vs 32 block writes at flush", size=13, color="text", anchor=MSO_ANCHOR.MIDDLE)
     lcd(s, Inches(6.95), Inches(5.3), Inches(2.9), Inches(1.3), "101 → 9.1", "AMAT with 2-entry VC", "green", vsize=26)
     text(s, Inches(10.0), Inches(5.5), Inches(2.8), Inches(1.1), "all 45 conflict misses caught; strided trace unchanged", size=13, color="text", anchor=MSO_ANCHOR.MIDDLE)
 
@@ -773,7 +773,7 @@ def build_slides():
             ("address breakdown", "tag / index / offset for any geometry, live in the GUI"),
             ("trace generation", "six patterns + Dinero / Valgrind input"),
             ("visualisation", "step-by-step cache array, counters, sweeps with charts"),
-            ("metrics & correctness", "hit/miss, 3C, AMAT — 39 tests from hand-worked examples")]
+            ("metrics & correctness", "hit/miss, 3C, AMAT — 55 tests from hand-worked examples")]
     yy = panel(s, Inches(0.5), Inches(1.55), Inches(7.9), Inches(5.1), "deliverables")
     for i, (a, b) in enumerate(done):
         y = yy + i * Inches(0.84)

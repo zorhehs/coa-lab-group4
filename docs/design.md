@@ -117,6 +117,14 @@ matters for the tests and for the report).
 Memory traffic is accounted in bytes: a block fetch or write-back moves *B* bytes, a
 write-through moves one `word_size` (4 B).
 
+**Dirty lines left at the end.** A write-back cache that never evicts a dirty line shows
+no memory writes during the trace, but it still owes memory one block write per dirty
+line. The simulator counts those lines (`dirty_lines`, main cache plus victim cache) and
+reports *flushed* totals that add the debt: `mem_writes_flushed = mem_writes + dirty_lines`
+and `traffic_flushed = traffic + dirty_lines × B`. The per-step counters are unchanged, so
+hand-worked traces still match; write-back and write-through are compared on the flushed
+totals, where every write has reached memory under both policies.
+
 ## 4. Miss classification (3C model)
 
 Following Hill's three-C model:
@@ -131,9 +139,14 @@ Following Hill's three-C model:
   the miss is caused only by the mapping (too few ways for the blocks competing for that
   set).
 
+The shadow cache is always LRU, whatever the real cache uses. With FIFO or RANDOM
+replacement a fully-associative cache can therefore miss on a block the LRU shadow still
+holds; that miss is labelled *conflict* although no mapping restriction exists. Read it as
+"lost to the replacement policy, relative to LRU".
+
 This is the standard definition used by Dinero-style simulators. It makes some results
-intuitive to verify: a fully-associative cache can never report a conflict miss, and a
-direct-mapped cache thrashing between two blocks reports two compulsory misses and then
+intuitive to verify: a fully-associative **LRU** cache can never report a conflict miss
+(it is the shadow cache), and a direct-mapped cache thrashing between two blocks reports two compulsory misses and then
 only conflict misses.
 
 Victim-cache hits are still counted as misses of the main cache (and classified) but they
@@ -156,6 +169,8 @@ cache array; in the counters as VICTIM HITS; in AMAT as `victim_hit_ratio × vic
 | memory miss ratio | (misses − victim hits) / accesses |
 | AMAT | `hit_time + memory_miss_ratio × miss_penalty + victim_hit_ratio × victim_penalty` |
 | traffic | bytes moved between cache and memory (fetches + write-backs + write-throughs) |
+| dirty lines | dirty lines still held (main + victim cache), i.e. block writes still owed |
+| traffic incl. flush | traffic + dirty lines × block size |
 
 ## 7. Traces
 

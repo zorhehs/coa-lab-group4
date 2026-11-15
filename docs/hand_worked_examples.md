@@ -110,8 +110,15 @@ Sequence 0, 4, 0, 4, 0, 4:
 the working set (5 blocks) is larger than the cache, every access after the first four
 evicts the block that will be needed next.
 
-→ all 10 miss: compulsory 5, **capacity 5**, conflict 0 (a fully-associative cache can
-never have a conflict miss).
+→ all 10 miss: compulsory 5, **capacity 5**, conflict 0 (a fully-associative LRU cache
+can never have a conflict miss).
+
+**FIFO in a fully-associative cache** — 4 blocks, sequence 0,1,2,3,0,4,0. The shadow
+cache is LRU: the re-use of 0 makes 1 the oldest, so 4 evicts 1 and the last access hits.
+FIFO ignores the re-use, evicts 0 (first filled) for 4, and the last access misses.
+
+→ LRU: 5 misses, conflict 0. FIFO: 6 misses, the last one labelled **conflict** because
+the LRU shadow still holds block 0. It is a replacement-policy loss, not a mapping one.
 
 **Same four blocks, 2-way**: sequence (0,1,2,3) × 3 → `MMMM HHHH HHHH`, no conflict,
 because the four blocks fit in the four lines.
@@ -146,6 +153,11 @@ Totals: mem reads 2, write-backs 1, traffic 3 × 16 = 48 B.
 | R 64 | M | read 1 block (evicted line is clean: no write-back) |
 
 Totals: mem writes 2, write-backs 0, traffic 2 × 16 + 2 × 4 = 40 B.
+
+**Dirty lines left at the end** (write-back): `W 0`, `W 16`, `W 4` → M, M, H. Two blocks
+fetched (32 B), nothing evicted, so 0 memory writes during the trace, but lines 0 and 1
+are both dirty. Flushing them costs 2 block writes: writes incl. flush 2, traffic incl.
+flush 32 + 2 × 16 = 64 B. The same trace under write-through leaves nothing to flush.
 
 **No-write-allocate** (write-through): `W 0` → miss, 1 word written to memory, **nothing
 allocated**, no block read. A following `R 0` is a miss again, and is **compulsory**

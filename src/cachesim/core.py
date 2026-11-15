@@ -69,14 +69,26 @@ class CacheConfig:
             self.write_policy = "WT"
         if isinstance(self.associativity, str):
             a = self.associativity.strip().lower()
-            self.associativity = 0 if a in ("full", "fa", "fully", "0") else int(a)
+            if a in ("full", "fa", "fully", "0"):
+                self.associativity = 0
+            else:
+                try:
+                    self.associativity = int(a)
+                except ValueError:
+                    raise ConfigError("associativity must be a number of ways or 'full' (got %r)"
+                                      % self.associativity)
         for name in ("cache_size", "block_size", "associativity", "address_bits",
                      "victim_entries", "word_size", "seed"):
-            setattr(self, name, int(getattr(self, name)))
+            try:
+                setattr(self, name, int(getattr(self, name)))
+            except (TypeError, ValueError):
+                raise ConfigError("%s must be a whole number (got %r)" % (name, getattr(self, name)))
         self.write_allocate = bool(self.write_allocate)
-        self.hit_time = float(self.hit_time)
-        self.miss_penalty = float(self.miss_penalty)
-        self.victim_penalty = float(self.victim_penalty)
+        for name in ("hit_time", "miss_penalty", "victim_penalty"):
+            try:
+                setattr(self, name, float(getattr(self, name)))
+            except (TypeError, ValueError):
+                raise ConfigError("%s must be a number (got %r)" % (name, getattr(self, name)))
         self.validate()
 
     # ---- validation -------------------------------------------------------
@@ -264,6 +276,7 @@ class Stats:
     mem_reads: int = 0
     mem_writes: int = 0
     traffic_bytes: int = 0
+    dirty_lines: int = 0    # dirty lines currently held (main + victim cache): not yet in memory
 
     def finalize(self, cfg: CacheConfig) -> Dict[str, Any]:
         d = asdict(self)
@@ -277,6 +290,12 @@ class Stats:
         d["amat"] = (cfg.hit_time + (memory_misses / n) * cfg.miss_penalty
                      + (self.victim_hits / n) * cfg.victim_penalty)
         d["traffic_kib"] = self.traffic_bytes / 1024.0
+        # A write-back cache still owes memory one block write per dirty line it holds.  The
+        # "flushed" totals add that debt, so write-back and write-through are compared on the
+        # same footing (every write eventually reaches memory) however short the trace is.
+        d["mem_writes_flushed"] = self.mem_writes + self.dirty_lines
+        d["traffic_flushed_bytes"] = self.traffic_bytes + self.dirty_lines * cfg.block_size
+        d["traffic_flushed_kib"] = d["traffic_flushed_bytes"] / 1024.0
         return d
 
 
@@ -486,6 +505,8 @@ class Cache:
             else:
                 st.write_hits += 1
                 if cfg.write_policy == "WB":
+                    if not line.dirty:
+                        st.dirty_lines += 1
                     line.dirty = True
                     notes.append("write hit: line marked dirty (write-back)")
                 else:
@@ -529,12 +550,14 @@ class Cache:
                         if pushed is not None and pushed[1]:
                             self._mem_write(cfg.block_size)
                             st.writebacks += 1
+                            st.dirty_lines -= 1
                             writeback = True
                             mem_write = True
                             notes.append("victim cache overflow: dirty block 0x%X written back" % pushed[0])
                     elif line.dirty:
                         self._mem_write(cfg.block_size)
                         st.writebacks += 1
+                        st.dirty_lines -= 1
                         writeback = True
                         mem_write = True
                         evicted["writeback"] = True
@@ -554,6 +577,8 @@ class Cache:
                 line.dirty = bool(victim_dirty) if victim_dirty is not None else False
                 if op == "W":
                     if cfg.write_policy == "WB":
+                        if not line.dirty:
+                            st.dirty_lines += 1
                         line.dirty = True
                         notes.append("write completes in cache (dirty)")
                     else:
@@ -567,6 +592,8 @@ class Cache:
                     # the line left the victim cache; write it back with the new data
                     self._mem_write(cfg.block_size)
                     st.writebacks += 1
+                    if victim_dirty:
+                        st.dirty_lines -= 1
                     writeback = True
                     mem_write = True
                     notes.append("no-write-allocate: victim line written back with new data")
@@ -602,6 +629,11 @@ class Cache:
                 kept.append(ev)
         self.events = kept
         return kept
+
+    def count_dirty(self) -> int:
+        """Dirty lines held right now, by inspection (``stats.dirty_lines`` tracks the same number)."""
+        return (sum(1 for lines in self.sets for l in lines if l.valid and l.dirty)
+                + sum(1 for d in self.victim.lines.values() if d))
 
     def results(self) -> Dict[str, Any]:
         return self.stats.finalize(self.cfg)

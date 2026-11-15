@@ -27,7 +27,7 @@ cache. A browser-based GUI, styled as a bench instrument, decodes each address i
 index and offset, animates hits and misses on the cache array, and runs parameter sweeps
 with charts. A trace generator produces sequential, loop, random, strided, matrix and
 conflict patterns; real program traces from Valgrind are also accepted. The simulator is
-verified by 46 unit tests derived from hand-worked textbook examples. Experiments
+verified by 55 unit tests derived from hand-worked textbook examples. Experiments
 reproduce the expected behaviour of each parameter and quantify, for example, that a
 two-entry victim cache reduces AMAT on a thrashing direct-mapped cache from 101 to 9.1
 cycles.
@@ -101,7 +101,9 @@ has dirty lines. On a write miss, write-allocate fetches the block and then proc
 hit; no-write-allocate writes the word around the cache and allocates nothing. Memory
 traffic is accounted in bytes (block size per fetch or write-back, word size per
 write-through), which lets the write policies be compared on bandwidth, not only on hit
-ratio, where they are identical.
+ratio, where they are identical. Dirty lines still in the cache when the trace ends have
+not reached memory yet, so the simulator also reports totals that include flushing them
+(one block write per dirty line); the write policies are compared on those totals.
 
 ### 2.5 Miss classification (3C)
 
@@ -110,8 +112,10 @@ definition). Otherwise the simulator asks a shadow fully-associative LRU cache w
 same number of lines whether *it* would have missed: if so the miss is *capacity*, if not
 it is *conflict* — the miss exists only because the mapping forced too many blocks into
 one set. This is the standard definition [3] and gives useful invariants: a
-fully-associative cache never reports conflict misses, and the conflict count is
-precisely what extra associativity can remove.
+fully-associative LRU cache never reports conflict misses, and the conflict count is
+precisely what extra associativity can remove. Because the shadow cache is always LRU, a
+fully-associative cache using FIFO or RANDOM can still show a few "conflict" misses; they
+measure what the replacement policy loses against LRU, not a mapping restriction.
 
 ### 2.6 Extension: victim cache
 
@@ -144,7 +148,7 @@ Table*: Code base by component
 | CLI (`run`, `decode`, `gen`, `sweep`, `serve`) | `src/cachesim/cli.py` | ~230 |
 | HTTP server + JSON API | `src/cachesim/server.py` | ~190 |
 | GUI | `src/web/{index.html,style.css,app.js}` | ~1300 |
-| tests | `tests/` | 46 tests |
+| tests | `tests/` | 55 tests |
 
 **Access events.** Each access returns an `AccessEvent` containing the decoded fields,
 set and way, result (`HIT`, `MISS`, `VICTIM`), miss type, eviction details, memory
@@ -182,7 +186,7 @@ one-word blocks) gives `M M H H M M H M`, hit ratio 0.375, with block 18 displac
 in set 2 — exactly the textbook table. LRU vs FIFO on the sequence 0, 4, 0, 8, 0 gives
 two hits vs one. The conflict sequence 0, 4, 0, 4, 0, 4 on a 4-line direct-mapped cache
 yields 2 compulsory + 4 conflict misses; the same count on a fully-associative cache with a
-5-block working set yields 5 compulsory + 5 capacity. All 46 tests pass.
+5-block working set yields 5 compulsory + 5 capacity. All 55 tests pass.
 
 ### 4.2 Associativity and replacement policy (Figure 4, `fig1_assoc_vs_policy_conflict.svg`)
 
@@ -243,14 +247,17 @@ Table: Write policies on the loop trace
 
 | policy | hit ratio | memory writes | traffic |
 |---|---:|---:|---:|
-| write-back, write-allocate | 0.958 | 0 | 0.50 KiB |
+| write-back, write-allocate | 0.958 | 32 | 1.00 KiB |
 | write-through, write-allocate | 0.958 | 188 | 1.23 KiB |
-| write-back, no-write-allocate | 0.936 | 17 | 0.57 KiB |
+| write-back, no-write-allocate | 0.936 | 49 | 1.07 KiB |
 | write-through, no-write-allocate | 0.936 | 188 | 1.23 KiB |
 
-Hit ratio is identical for WB and WT; the difference is bandwidth — write-through sends
-every one of the 188 writes to memory, write-back sends none because the array fits in
-the cache and nothing dirty is ever evicted. No-write-allocate lowers the hit ratio
+Totals include the final flush of dirty lines. Hit ratio is identical for WB and WT; the
+difference is bandwidth — write-through sends every one of the 188 writes to memory as a
+word, while write-back batches them: the array fits in the cache, nothing dirty is evicted
+during the trace, and the 32 dirty blocks are each written once at the end (before that
+flush write-back shows 0 writes and 0.50 KiB). Write-through moves 1.23 times the bytes
+and makes almost six times as many memory writes. No-write-allocate lowers the hit ratio
 because the lines written are not brought in for the later reads.
 
 ### 4.6 Victim cache (Figure 8, `fig5_victim_cache_amat.svg`)

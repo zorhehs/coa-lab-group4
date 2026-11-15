@@ -53,14 +53,17 @@ reproducible with the CLI commands shown.
 
 ## 4. Write policy x allocation, loop trace (25% writes)
 
-`python -m cachesim sweep --trace data/loop.trace --assoc 4 --param write_policy --values WB,WT --series write_allocate --series-values 1,0 --metric mem_writes`
+`python -m cachesim sweep --trace data/loop.trace --assoc 4 --param write_policy --values WB,WT --series write_allocate --series-values 1,0 --metric traffic_flushed_kib`
 
-| series | config | hit_ratio | write_misses | writebacks | mem_reads | mem_writes | traffic_kib |
-|---|---|---:|---:|---:|---:|---:|---:|
-| WA | WB | 0.9583 | 12 | 0 | 32 | 0 | 0.5000 |
-| WA | WT | 0.9583 | 12 | 0 | 32 | 188 | 1.2344 |
-| NWA | WB | 0.9362 | 17 | 0 | 32 | 17 | 0.5664 |
-| NWA | WT | 0.9362 | 17 | 0 | 32 | 188 | 1.2344 |
+| series | config | hit_ratio | write_misses | writebacks | mem_reads | mem_writes | traffic_kib | dirty_lines | mem_writes_flushed | traffic_flushed_kib |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| WA | WB | 0.9583 | 12 | 0 | 32 | 0 | 0.5000 | 32 | 32 | 1.0000 |
+| WA | WT | 0.9583 | 12 | 0 | 32 | 188 | 1.2344 | 0 | 188 | 1.2344 |
+| NWA | WB | 0.9362 | 17 | 0 | 32 | 17 | 0.5664 | 32 | 49 | 1.0664 |
+| NWA | WT | 0.9362 | 17 | 0 | 32 | 188 | 1.2344 | 0 | 188 | 1.2344 |
+
+`mem_writes` and `traffic_kib` count what happened during the trace. `dirty_lines` is what a write-back
+cache still holds at the end; the `*_flushed` columns add one block write for each of them.
 
 ## 5. Victim cache (extension), direct-mapped 1 KiB
 

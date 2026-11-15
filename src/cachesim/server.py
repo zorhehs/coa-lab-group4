@@ -67,13 +67,32 @@ def _trace_files() -> list:
 
 
 def _config(d: Dict[str, Any]) -> CacheConfig:
+    if d is not None and not isinstance(d, dict):
+        raise ApiError("config must be a JSON object")
     try:
         return CacheConfig.from_dict(d or {})
     except (ConfigError, ValueError, TypeError) as e:
         raise ApiError("config: %s" % e)
 
 
+def _as_list(value: Any, what: str) -> list:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ApiError("%s must be a list" % what)
+    return list(value)
+
+
+def _trace_text(body: Dict[str, Any]) -> str:
+    text = body.get("trace", "")
+    if not isinstance(text, str):
+        raise ApiError("trace must be text")
+    return text
+
+
 def handle_api(method: str, path: str, body: Dict[str, Any]) -> Any:
+    if not isinstance(body, dict):
+        raise ApiError("request body must be a JSON object")
     if path == "/api/meta" and method == "GET":
         return {"version": __version__, "generators": GENERATOR_PARAMS, "sweepable": SWEEPABLE,
                 "metrics": METRICS, "defaults": CacheConfig().to_dict(),
@@ -94,6 +113,8 @@ def handle_api(method: str, path: str, body: Dict[str, Any]) -> Any:
     if path == "/api/generate":
         kind = body.get("kind", "loop")
         params = body.get("params", {}) or {}
+        if not isinstance(kind, str) or not isinstance(params, dict):
+            raise ApiError("generate: kind must be a string and params an object")
         try:
             acc = generate(kind, **params)
         except (TraceError, ValueError, TypeError, ArithmeticError) as e:
@@ -112,10 +133,13 @@ def handle_api(method: str, path: str, body: Dict[str, Any]) -> Any:
     if path == "/api/simulate":
         cfg = _config(body.get("config"))
         try:
-            trace = parse_trace(body.get("trace", ""), bool(body.get("include_instr", False)))
+            trace = parse_trace(_trace_text(body), bool(body.get("include_instr", False)))
         except TraceError as e:
             raise ApiError("trace: %s" % e)
-        limit = max(0, int(body.get("event_limit", EVENT_LIMIT_DEFAULT)))
+        try:
+            limit = max(0, int(body.get("event_limit", EVENT_LIMIT_DEFAULT)))
+        except (TypeError, ValueError):
+            raise ApiError("event_limit must be a whole number")
         # every kept event carries two snapshots of its whole set, so bound the count by the ways
         limit = min(limit, max(16, SNAPSHOT_BUDGET // max(1, cfg.ways)))
         return simulate(cfg, trace, keep_events=limit)
@@ -123,13 +147,15 @@ def handle_api(method: str, path: str, body: Dict[str, Any]) -> Any:
     if path == "/api/sweep":
         cfg = _config(body.get("config"))
         try:
-            trace = parse_trace(body.get("trace", ""), bool(body.get("include_instr", False)))
+            trace = parse_trace(_trace_text(body), bool(body.get("include_instr", False)))
         except TraceError as e:
             raise ApiError("trace: %s" % e)
         try:
-            rows = sweep(cfg, trace, body.get("param", "associativity"), body.get("values", []),
-                         body.get("series_param") or None, body.get("series_values") or None)
-        except ValueError as e:
+            rows = sweep(cfg, trace, body.get("param", "associativity"),
+                         _as_list(body.get("values"), "values"),
+                         body.get("series_param") or None,
+                         _as_list(body.get("series_values"), "series_values") or None)
+        except (ValueError, TypeError) as e:
             raise ApiError(str(e))
         return {"rows": rows, "accesses": len(trace)}
 
