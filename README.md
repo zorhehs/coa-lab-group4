@@ -26,7 +26,7 @@ victim-cache extension. **Python standard library only — nothing to install.**
 Requirements: Python 3.8 or newer (tested on 3.9 and 3.14). No third-party packages.
 
 ```bash
-git clone <repo-url> coa-lab-group4
+git clone https://github.com/zorhehs/coa-lab-group4.git
 cd coa-lab-group4
 
 # full scripted demo: tests → traces → hand-worked example → sweeps → figures → GUI
