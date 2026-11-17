@@ -356,7 +356,15 @@ function setStep(n, fromPlay) {
 }
 
 /* ---- playback ---- */
-function stepsPerSecond() { return Number($('#speed').value); }
+const RATES = [0.25, 0.5, 1, 2, 4, 8, 16, 32];        // accesses per second, one slider stop each
+function stepsPerSecond() { return RATES[Number($('#speed').value)] || 1; }
+function rateLabel(r) { return r >= 1 ? `${r} / s` : `1 / ${Math.round(1 / r)} s`; }
+function setRate(r) {
+  let best = 0;
+  RATES.forEach((v, i) => { if (Math.abs(v - r) < Math.abs(RATES[best] - r)) best = i; });
+  $('#speed').value = best;
+  $('#speed').dispatchEvent(new Event('input'));
+}
 function startPlayback() {
   if (!state.sim || atEnd()) return;
   state.playing = true;
@@ -505,6 +513,33 @@ function fieldsHTML(f, g, e) {
     <div class="field"><span class="lbl">BLOCK ADDRESS</span><span class="lcd dimmed">${f.block_address}</span></div>`;
 }
 
+// one or two plain sentences about the current access, for people following along
+const MISS_WHY = {
+  compulsory: 'this block has never been in the cache before',
+  capacity: 'the cache is too small to have kept this block',
+  conflict: 'another block took its place in this set, though the cache had room elsewhere',
+};
+function explain(e, g) {
+  const verb = e.op === 'R' ? 'Read' : 'Write';
+  const where = g.num_sets > 1 ? `Index bits pick <b>set ${e.set_index}</b>` : 'Every line is searched';
+  let s = `${verb} <b>${esc(e.fields.hex)}</b>. ${where}; the tag is <b>${esc(e.fields.tag_hex)}</b>. `;
+  if (e.result === 'HIT') {
+    s += `That tag is already in way ${e.way}, so this is a <b class="g">hit</b>: no trip to memory.`;
+    if (e.op === 'W') s += e.mem_write ? ' The word is also written through to memory.' : ' The line is marked dirty and written back later.';
+    return s;
+  }
+  if (e.result === 'VICTIM') s += 'Not in the set, but found in the <b class="b">victim cache</b>, so it is swapped back in without a memory read.';
+  else s += `No line in the set holds it: a <b class="r">miss</b>${e.miss_type ? ` (${e.miss_type}: ${MISS_WHY[e.miss_type]})` : ''}.`;
+  if (e.way === null || e.way === undefined) return s + ' With no-write-allocate the word goes straight to memory and the cache is left unchanged.';
+  if (e.result !== 'VICTIM') s += ` The block is fetched from memory into way ${e.way}.`;
+  if (e.evicted) {
+    s += ` It replaces tag <b>${hex(e.evicted.tag)}</b>`;
+    s += e.evicted.to_victim ? ', which moves to the victim cache.' : (e.evicted.writeback ? ', which was dirty and is written back to memory first.' : ', which was clean and is simply dropped.');
+  }
+  if (e.op === 'W') s += e.mem_write && !e.writeback ? ' The word is written through to memory.' : (g.write_policy === 'WB' ? ' The line is marked dirty.' : '');
+  return s;
+}
+
 const decodeView = { badgeKey: '' };
 function renderDecode() {
   const g = geometry();
@@ -518,7 +553,7 @@ function renderDecode() {
     f = e.fields; op = e.op;
     const mt = e.miss_type ? `<small>${e.miss_type.toUpperCase()}</small>` : '';
     badge = `<div class="result-badge ${e.result}">${e.result === 'VICTIM' ? 'VICTIM HIT' : e.result}${mt}</div>`;
-    note = `<b>SET ${e.set_index}</b>${e.way === null ? '' : ` · WAY ${e.way}`} — ${esc(e.note)}`;
+    note = explain(e, state.sim.config);
     if (isEndSummary()) note = `<b>END · access ${state.traceCount} of ${state.traceCount}</b> (stepping covers the first ${state.sim.events.length}; counters show whole-trace totals) — ` + note;
   } else if (state.sim) {
     note = `Press ▶ or step forward. Each step is one memory access from the trace.`;
@@ -533,7 +568,13 @@ function renderDecode() {
   if (badge) $('.result-badge').id = 'resultBadge';
   $('#bitsOut').innerHTML = f ? bitsHTML(f) : bitsHTML({ tag_binary: '', index_binary: '', offset_binary: '', tag_bits: g.tag_bits, index_bits: g.index_bits, offset_bits: g.offset_bits });
   $('#fieldsOut').innerHTML = f ? fieldsHTML(f, g, probeActive ? null : e) : '';
-  $('#noteOut').innerHTML = note;
+  const noteEl = $('#noteOut');
+  noteEl.className = 'note' + (e && !probeActive ? ' ' + e.result : '');
+  if (noteEl.dataset.key !== note) {
+    noteEl.dataset.key = note;
+    noteEl.innerHTML = note;
+    if (e && !probeActive) restartAnimation(noteEl, 'anim', ['anim']);
+  }
 }
 
 /* ---- cache array ---- */
@@ -825,7 +866,7 @@ function renderArray() {
   }
   if (curSet >= 0 && g.num_sets <= FULL_GRID_MAX_SETS) {
     const row = out.querySelector(`.set-row[data-set="${curSet}"]`);
-    revealIn(out.closest('.array-body'), row, !(state.playing && stepsPerSecond() > 10));
+    revealIn(out.closest('.array-body'), row, !(state.playing && stepsPerSecond() > 8));
   }
   arrayView.lastStep = state.step;
   renderConnector();
@@ -850,7 +891,7 @@ const COUNTER_GROUPS = [
                 ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'], ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', '']]],
   ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'accent'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
   ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'accent'],
-              ['dirty_lines', 'DIRTY · UNFLUSHED', '']]],
+              ['dirty_lines', 'DIRTY LINES', '']]],
 ];
 function renderCounters() {
   const s = currentStats();
@@ -872,7 +913,7 @@ function renderCounters() {
   if (!grid.firstChild) {
     const item = ([k, l, c]) => `<div class="ctr ${c}" data-k="${k}"><span class="lbl">${l}</span><span class="val ${c}"><span class="n">0</span></span></div>`;
     const traffic = `<div class="ctr" data-k="traffic"><span class="lbl">TRAFFIC</span><span class="val"><span class="n">0.00 KiB</span></span></div>` +
-      `<div class="ctr" data-k="trafficFlushed" title="traffic if every dirty line were written back now"><span class="lbl">TRAFFIC + FLUSH</span><span class="val"><span class="n">0.00 KiB</span></span></div>`;
+      `<div class="ctr" data-k="trafficFlushed" title="traffic if every dirty line were written back now"><span class="lbl">WITH FLUSH</span><span class="val"><span class="n">0.00 KiB</span></span></div>`;
     grid.innerHTML = COUNTER_GROUPS.map(([title, items], gi) =>
       `<div class="ctr-group"><h5>${title}</h5><div class="ctr-list">${items.map(item).join('')}${gi === COUNTER_GROUPS.length - 1 ? traffic : ''}</div></div>`).join('');
   }
@@ -923,7 +964,7 @@ function renderLog() {
     r.classList.toggle('pending', n > state.step && !isEndSummary());
   }
   const cur = out.querySelector('.log-row.current');
-  if (cur) revealIn(out, cur, !(state.playing && stepsPerSecond() > 10));
+  if (cur) revealIn(out, cur, !(state.playing && stepsPerSecond() > 8));
   else if (state.step === 0) out.scrollTop = 0;
 }
 
@@ -1330,14 +1371,22 @@ function toggleHelp(show) {
 }
 function nudgeRate(delta) {
   const s = $('#speed');
-  s.value = Math.max(Number(s.min), Math.min(Number(s.max), Number(s.value) + delta));
+  s.value = Math.max(Number(s.min), Math.min(Number(s.max), Number(s.value) + Math.sign(delta)));
   s.dispatchEvent(new Event('input'));
-  toast(`rate ${stepsPerSecond()} steps/s`);
+  toast(`speed ${rateLabel(stepsPerSecond())}`);
 }
 function applyAnimSpeed() {
-  // manual stepping gets the full animation; during playback it shortens with the rate so the array never lags
-  const ms = state.playing ? Math.max(140, Math.min(650, Math.round(800 / stepsPerSecond()))) : 650;
-  document.documentElement.style.setProperty('--anim-ms', ms + 'ms');
+  // Manual stepping and slow playback get the full, staged animation: the address decodes, the set
+  // lights up, then the line shows the result.  As the rate rises the animation shortens so the
+  // array never lags behind, and above 4 accesses per second the stages collapse into one.
+  const rate = stepsPerSecond();
+  const interval = 1000 / rate;
+  const ms = state.playing ? Math.max(140, Math.min(900, Math.round(interval * 0.7))) : 800;
+  const staged = !state.playing || rate <= 4;
+  const root = document.documentElement.style;
+  root.setProperty('--anim-ms', ms + 'ms');
+  root.setProperty('--stage', (staged ? Math.round(ms * 0.3) : 0) + 'ms');
+  root.setProperty('--glide', Math.max(90, Math.min(320, Math.round(interval * 0.45))) + 'ms');
 }
 
 /* ------------------------------------------------------------------ */
@@ -1349,8 +1398,15 @@ function wire() {
   $('#btnStep').addEventListener('click', () => { stopPlayback(); setStep(state.step + 1); });
   $('#btnLast').addEventListener('click', () => { stopPlayback(); setStep(maxStep()); });
   $('#btnPlay').addEventListener('click', () => { if (state.playing) { stopPlayback(); setStatus('IDLE'); } else { if (atEnd()) setStep(0); startPlayback(); } });
-  $('#speed').addEventListener('input', () => { $('#speedOut').textContent = stepsPerSecond() + '/s'; applyAnimSpeed(); });
-  $('#speedOut').textContent = stepsPerSecond() + '/s';
+  $('#speed').addEventListener('input', () => {
+    $('#speedOut').textContent = rateLabel(stepsPerSecond());
+    applyAnimSpeed();
+    try { localStorage.setItem('cachesim.rate', String(stepsPerSecond())); } catch (err) { /* private mode: not remembered */ }
+  });
+  let savedRate = NaN;
+  try { savedRate = Number(localStorage.getItem('cachesim.rate')); } catch (err) { /* ignore */ }
+  if (savedRate > 0 && RATES.indexOf(savedRate) >= 0) $('#speed').value = RATES.indexOf(savedRate);
+  $('#speedOut').textContent = rateLabel(stepsPerSecond());
   applyAnimSpeed();
 
   document.addEventListener('keydown', (e) => {
@@ -1369,8 +1425,8 @@ function wire() {
     else if (e.key === 'ArrowLeft') { e.preventDefault(); stopPlayback(); setStep(state.step - n); }
     else if (e.key === 'Home') { e.preventDefault(); $('#btnFirst').click(); }
     else if (e.key === 'End') { e.preventDefault(); $('#btnLast').click(); }
-    else if (e.key === '+' || e.key === '=') { e.preventDefault(); nudgeRate(2); }
-    else if (e.key === '-' || e.key === '_') { e.preventDefault(); nudgeRate(-2); }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); nudgeRate(1); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); nudgeRate(-1); }
     else if (e.key === '/') { e.preventDefault(); $('#probeIn').focus(); $('#probeIn').select(); }
   });
   $('#btnHelp').addEventListener('click', () => toggleHelp());
@@ -1399,8 +1455,10 @@ function wire() {
   strip.addEventListener('pointerup', () => { scrubbing = false; });
   strip.addEventListener('pointercancel', () => { scrubbing = false; });
   // rate presets
-  $$('#ratePresets button').forEach((b) => b.addEventListener('click', () => { $('#speed').value = b.dataset.rate; $('#speed').dispatchEvent(new Event('input')); }));
-  $('#speed').addEventListener('input', () => { $$('#ratePresets button').forEach((b) => b.classList.toggle('active', Number(b.dataset.rate) === stepsPerSecond())); });
+  const markPreset = () => $$('#ratePresets button').forEach((b) => b.classList.toggle('active', Number(b.dataset.rate) === stepsPerSecond()));
+  $$('#ratePresets button').forEach((b) => b.addEventListener('click', () => setRate(Number(b.dataset.rate))));
+  $('#speed').addEventListener('input', markPreset);
+  markPreset();
   // sticky offsets follow the real top-bar height; canvases follow their width
   const syncTop = () => document.documentElement.style.setProperty('--topbar-h', $('.topbar').offsetHeight + 'px');
   syncTop();

@@ -27,11 +27,11 @@
     <button class="tbtn" id="btnStep" title="Step forward (→)" aria-label="Step forward"><svg viewBox="0 0 16 16"><path d="M4 3l6.5 5L4 13zM11.5 3h2v10h-2z"/></svg></button>
     <button class="tbtn" id="btnLast" title="Run to end (End)" aria-label="Run to end"><svg viewBox="0 0 16 16"><path d="M2 3l4.5 5L2 13zM7 3l4.5 5L7 13zM12 3h2v10h-2z"/></svg></button>
     <div class="speed">
-      <span class="lbl">RATE</span>
-      <input type="range" id="speed" min="1" max="40" value="8">
-      <span class="lcd lcd-xs" id="speedOut">8/s</span>
+      <span class="lbl">SPEED</span>
+      <input type="range" id="speed" min="0" max="7" step="1" value="2" title="playback speed (+ / − keys)" aria-label="Playback speed">
+      <span class="lcd lcd-xs" id="speedOut">1 / s</span>
       <span class="rate-presets" id="ratePresets" title="playback rate presets (+ / − keys)">
-        <button data-rate="1">1</button><button data-rate="4">4</button><button data-rate="8" class="active">8</button><button data-rate="20">20</button>
+        <button data-rate="0.5" title="one access every 2 seconds">SLOW</button><button data-rate="1" class="active" title="1 access per second">1×</button><button data-rate="4" title="4 accesses per second">4×</button><button data-rate="32" title="32 accesses per second">FAST</button>
       </span>
     </div>
     <div class="status">
@@ -127,7 +127,7 @@
           <button class="btn btn-ghost" id="btnInjectR" title="Append a read of this address to the trace">INJECT R</button>
           <button class="btn btn-ghost" id="btnInjectW" title="Append a write of this address to the trace">INJECT W</button>
         </div>
-        <div class="note" id="noteOut"></div>
+        <div class="note" id="noteOut" aria-live="polite"></div>
       </div>
     </section>
 
@@ -233,7 +233,7 @@
           <dt><kbd>Shift</kbd>+<kbd>→</kbd></dt><dd>jump ten accesses (either direction)</dd>
           <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>reset / run to the end</dd>
           <dt><kbd>timeline</kbd></dt><dd>click or drag the strip under the transport to seek; green / red / blue ticks are hits, misses, victim hits</dd>
-          <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>playback rate up / down</dd>
+          <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>playback speed up / down</dd>
           <dt><kbd>/</kbd></dt><dd>jump to the PROBE field</dd>
           <dt><kbd>?</kbd></dt><dd>open or close this overlay</dd>
           <dt><kbd>Esc</kbd></dt><dd>close the overlay · leave a text field</dd>
