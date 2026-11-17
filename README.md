@@ -71,18 +71,16 @@ PYTHONPATH=src python3 -m cachesim serve            # default port 8077
 PYTHONPATH=src python3 -m cachesim serve --port 9000 --no-browser
 ```
 
-| Panel | What it does |
+| Area | What it does |
 |---|---|
-| **CONFIGURATION** | Cache size, block size, mapping (DM / 2–16-way / full), replacement, write policy, allocation policy, address width, victim cache, timing for AMAT. Every change re-runs the trace instantly. |
-| **GEOMETRY** | Derived sets / ways / lines and the tag-index-offset bit split, plus the equivalent CLI command. |
-| **TRACE SOURCE** | Load a preset from `data/`, generate a synthetic trace (sequential, loop, random, strided, matrix, conflict) or paste / open a file. |
-| **ADDRESS DECODE** | The current access shown bit by bit (tag / index / offset), its result and what the cache did. The **PROBE** field decodes any address you type; **INJECT R / W** appends it to the trace. |
-| **CACHE ARRAY** | Every set and way with valid / dirty LEDs, tag and LRU age bars. Hits flash green, misses red, victim-cache hits blue. Caches with more than 64 sets switch to an activity map plus a detail window. |
-| **COUNTERS** | Hit / miss ratio, AMAT, miss breakdown (compulsory / capacity / conflict), memory reads / writes, write-backs, traffic — all at the current step. |
-| **ACCESS LOG** | One row per access; click a row to jump to that step. |
+| **SETUP** (drawer, top left) | Trace source (presets from `data/`, a generator, or paste / open a file), then cache size, block size, mapping (DM / 2–16-way / full), replacement, write and allocation policy, address width, victim cache and AMAT timing, plus the derived geometry and the equivalent CLI command. Every change re-runs the trace instantly. Docks beside the stage on wide screens, slides over it on smaller ones. |
+| **Headline cards** | Hit ratio with its trend, miss ratio, AMAT, why it missed (compulsory / capacity / conflict) and memory traffic, at the current step. |
+| **CURRENT ACCESS** | The address bit by bit (tag / index / offset), its result, and a plain-language sentence explaining what the cache did. The probe field in its header decodes any address; **+R / +W** append it to the trace. |
+| **CACHE ARRAY** | Every set and way with valid / dirty LEDs, tag and LRU age bars. The set lights up, then the line shows the result: green hit, red miss, blue victim-cache hit. Caches with more than 64 sets switch to an activity map plus a detail window. |
+| **ACCESS LOG / ALL COUNTERS** | Tabs in the side panel: one row per access (click to jump to it), or every counter including memory reads / writes, write-backs and dirty lines. |
 | **EXPERIMENTS** | Sweep associativity, block size, cache size, replacement, write policy, allocation or victim entries, optionally with a second parameter as series. Charts + table + CSV export. **COMPARE TRACES** runs the current configuration over every preset. |
 
-Transport: `⏮ ◀ ▶ ▶▏ ⏭` or keyboard **Space** (play/pause), **← →** (step), **Home / End**.
+Transport: `⏮ ◀ ▶ ▶▏ ⏭` or keyboard **Space** (play/pause), **← →** (step), **Home / End**. Speed runs from one access every 4 s to 32 per second (**+ / −**). **S** opens SETUP, **T** switches between the dark and light themes, **?** lists every shortcut.
 
 ## 4. Using the command line
 

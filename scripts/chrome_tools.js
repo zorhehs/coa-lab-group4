@@ -173,7 +173,8 @@ async function main() {
   } finally {
     if (cdp) cdp.ws.close();
     chrome.kill('SIGKILL');
-    fs.rmSync(profile, { recursive: true, force: true });
+    // Chrome may still be flushing its profile as it exits: retry, and never fail the build over a temp folder
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 }); } catch (e) { /* left for the OS temp cleaner */ }
   }
 }
 

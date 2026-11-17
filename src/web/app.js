@@ -64,7 +64,7 @@ function theme() {
   if (!themeCache) {
     const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
     themeCache = { accent: v('--accent'), green: v('--green'), red: v('--red'), blue: v('--blue'), violet: v('--violet'),
-      accentRgb: v('--accent-rgb'), greenRgb: v('--green-rgb'), lcd: v('--lcd'), text: v('--text'), muted: v('--muted'), dim: v('--dim'), hair: v('--hair-2') };
+      accentRgb: v('--accent-rgb'), greenRgb: v('--green-rgb'), tintRgb: v('--tint-rgb'), veil: v('--veil'), lcd: v('--lcd'), text: v('--text'), muted: v('--muted'), dim: v('--dim'), hair: v('--hair-2') };
   }
   return themeCache;
 }
@@ -676,8 +676,11 @@ function renderConnector() {
     out = `<path d="${d}"/><path class="head" d="M${rail - 4},${(ey < vt ? cy + 6 : cy - 6).toFixed(1)} l4,${ey < vt ? -6 : 6} 4,${ey < vt ? 6 : -6} z"/>`;
   }
   const txt = `SET ${e.set_index}`;
-  const lx = rail + 8, ly = sy + 7 + 12;
-  out += `<rect class="lblbg" x="${lx - 4}" y="${ly - 9}" width="${txt.length * 6.3 + 8}" height="13" rx="2"/><text x="${lx}" y="${ly + 1}">${txt}</text>`;
+  // label sits on the rail just above where the wire turns into the set, clear of the decode text
+  const turnY = visible ? ey : (ey < vt ? vt + 6 : vb - 6);
+  const lx = rail + 8, ly = Math.max(sy + 20, turnY - 10);
+  // the row already says which set it is; name it only when that row is scrolled out of view
+  if (!visible) out += `<rect class="lblbg" x="${lx - 4}" y="${ly - 9}" width="${txt.length * 6.3 + 8}" height="13" rx="2"/><text x="${lx}" y="${ly + 1}">${txt}</text>`;
   svg.innerHTML = out;
 }
 
@@ -731,7 +734,7 @@ function renderTraceStrip() {
   ctx.drawImage(traceView.base, 0, 0);
   const n = state.sim.events.length, done = Math.min(state.step, n);
   const x = w * done / n;
-  ctx.fillStyle = 'rgba(11,12,14,.72)';
+  ctx.fillStyle = theme().veil;
   ctx.fillRect(Math.floor(x * dpr), 0, cv.width - Math.floor(x * dpr), cv.height);   // dim what has not run yet
   cur.hidden = false; cur.style.left = Math.max(0, Math.min(w - 2, x)) + 'px';
   const extra = state.sim.truncated ? ` · +${state.traceCount - n} MORE (END)` : '';
@@ -760,7 +763,7 @@ function renderSpark() {
   if (sparkView.sim !== state.sim) { sparkView.pts = state.sim.events.map((e) => e.stats_after.hit_ratio); sparkView.sim = state.sim; }
   const pts = sparkView.pts, n = pts.length;
   const X = (i) => 3 + (w - 6) * i / Math.max(1, n - 1), Y = (v) => 4 + (h - 8) * (1 - v);
-  for (const g of [0.25, 0.5, 0.75]) { ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.beginPath(); ctx.moveTo(3, Y(g)); ctx.lineTo(w - 3, Y(g)); ctx.stroke(); }
+  for (const g of [0.25, 0.5, 0.75]) { ctx.strokeStyle = `rgba(${theme().tintRgb},.08)`; ctx.beginPath(); ctx.moveTo(3, Y(g)); ctx.lineTo(w - 3, Y(g)); ctx.stroke(); }
   const done = Math.min(state.step, n);
   const line = (from, to, color, width) => {
     if (to - from < 1) return;
@@ -904,6 +907,12 @@ function renderCounters() {
   $('#missBar .comp').style.width = (100 * z('compulsory') / m) + '%';
   $('#missBar .cap').style.width = (100 * z('capacity') / m) + '%';
   $('#missBar .conf').style.width = (100 * z('conflict') / m) + '%';
+  $('#mixComp').textContent = z('compulsory');
+  $('#mixCap').textContent = z('capacity');
+  $('#mixConf').textContent = z('conflict');
+  $('#kpiMissFoot').textContent = s ? `${z('misses')} of ${z('accesses')} accesses missed` : 'no accesses yet';
+  $('#kpiTraffic').innerHTML = `${s ? s.traffic_kib.toFixed(2) : '0.00'}<small> KiB</small>`;
+  $('#kpiTrafficFoot').textContent = s && s.dirty_lines ? `${s.traffic_flushed_kib.toFixed(2)} KiB once ${s.dirty_lines} dirty lines are flushed` : 'bytes moved to and from memory';
   const n = Math.max(1, z('accesses'));
   // what the current access changed: compare with the statistics after the previous step
   const prev = s && !isEndSummary() ? (state.step >= 2 ? state.sim.events[state.step - 2].stats_after : null) : null;
@@ -1363,6 +1372,46 @@ function chartHover(ev) {
 }
 
 /* ---- help overlay & shortcuts ---- */
+/* ---- setup drawer: docked beside the stage on wide screens, an overlay otherwise ---- */
+const DOCK_MIN = 1500;
+function setupDocked() { return window.innerWidth >= DOCK_MIN; }
+function setupIsOpen() { return document.body.classList.contains('setup-open'); }
+function toggleSetup(open, section) {
+  const want = open === undefined ? !setupIsOpen() : open;
+  document.body.classList.toggle('setup-open', want);
+  $('#btnSetup').setAttribute('aria-expanded', String(want));
+  try { localStorage.setItem('cachesim.setup', want ? '1' : '0'); } catch (err) { /* not remembered */ }
+  if (want && section === 'trace') $('#modTrace').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  // the stage changes width when the drawer docks: redraw what is measured in pixels
+  setTimeout(() => { renderTraceStrip(); renderSpark(); renderConnector(); }, 300);
+}
+function initSetupDrawer() {
+  let saved = null;
+  try { saved = localStorage.getItem('cachesim.setup'); } catch (err) { /* ignore */ }
+  const open = saved === null ? setupDocked() : saved === '1';
+  document.body.classList.toggle('setup-open', open);
+  $('#btnSetup').setAttribute('aria-expanded', String(open));
+  requestAnimationFrame(() => document.body.classList.add('setup-ready'));
+  // segmented controls reflow (2 x 2 on narrow screens, drawer width): keep each highlight on its button
+  const segObserver = new ResizeObserver((entries) => entries.forEach((en) => positionIndicator(en.target)));
+  const watchSegs = () => $$('.seg-ind').forEach((seg) => { if (!seg.dataset.watched) { seg.dataset.watched = '1'; segObserver.observe(seg); } });
+  watchSegs();
+  new MutationObserver(watchSegs).observe($('#configBody'), { childList: true, subtree: true });
+}
+
+/* ---- light / dark theme ---- */
+function currentTheme() { return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'; }
+function applyTheme(t) {
+  document.body.classList.add('theme-swap');                // swap colours at once, no half-faded frame
+  if (t === 'light') document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem('cachesim.theme', t); } catch (err) { /* not remembered */ }
+  themeCache = null; traceView.sim = null;                   // canvases read colours from the theme
+  renderTraceStrip(); renderSpark();
+  if (state.sweep) renderSweep();
+  $('#btnTheme').title = t === 'light' ? 'Switch to dark mode (T)' : 'Switch to light mode (T)';
+  requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('theme-swap')));
+}
+
 function toggleHelp(show) {
   const o = $('#helpOverlay');
   const vis = show === undefined ? o.hidden : show;
@@ -1415,10 +1464,13 @@ function wire() {
     if (e.key === 'Escape') {
       if (helpOpen) { e.preventDefault(); toggleHelp(false); return; }
       if (inField) { document.activeElement.blur(); return; }
+      if (setupIsOpen() && !setupDocked()) { e.preventDefault(); toggleSetup(false); return; }
     }
     if (inField || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === '?' || (e.key === '/' && e.shiftKey)) { e.preventDefault(); toggleHelp(); return; }
     if (helpOpen) return;
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); toggleSetup(); return; }
+    if (e.key === 't' || e.key === 'T') { e.preventDefault(); applyTheme(currentTheme() === 'light' ? 'dark' : 'light'); return; }
     const n = e.shiftKey ? 10 : 1;
     if (e.key === ' ') { e.preventDefault(); $('#btnPlay').click(); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); stopPlayback(); setStep(state.step + n); }
@@ -1430,6 +1482,19 @@ function wire() {
     else if (e.key === '/') { e.preventDefault(); $('#probeIn').focus(); $('#probeIn').select(); }
   });
   $('#btnHelp').addEventListener('click', () => toggleHelp());
+  $('#btnSetup').addEventListener('click', () => toggleSetup());
+  $('#btnTheme').addEventListener('click', () => applyTheme(currentTheme() === 'light' ? 'dark' : 'light'));
+  $('#btnTheme').title = currentTheme() === 'light' ? 'Switch to dark mode (T)' : 'Switch to light mode (T)';
+  $('#btnSetupClose').addEventListener('click', () => toggleSetup(false));
+  $('#setupScrim').addEventListener('click', () => toggleSetup(false));
+  $('#readoutStrip').addEventListener('click', () => toggleSetup(true, 'trace'));
+  $('#inspTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('.itab'); if (!b) return;
+    $$('#inspTabs .itab').forEach((t) => t.classList.toggle('active', t === b));
+    $$('#modInspector .insp-pane').forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+    $('#logFilter').hidden = b.dataset.tab !== 'log';
+    if (b.dataset.tab === 'log') renderLog(); else renderCounters();
+  });
   $('#btnHelpClose').addEventListener('click', () => toggleHelp(false));
   $('#helpOverlay').addEventListener('click', (e) => { if (e.target === $('#helpOverlay')) toggleHelp(false); });
   $('#chartOut').addEventListener('mousemove', chartHover);
@@ -1499,7 +1564,7 @@ function wire() {
   $('#logFilter').addEventListener('input', applyLogFilter);
   $('#heatStrip').addEventListener('click', (e) => { const i = e.target.closest('i[data-set]'); if (i) { state.arrayFocus = Number(i.dataset.set); renderArray(); } });
   $('#arrayOut').closest('.array-body').addEventListener('scroll', () => renderConnector(), { passive: true });
-  new ResizeObserver(() => renderConnector()).observe($('.rack-center'));
+  new ResizeObserver(() => renderConnector()).observe($('.stage-main'));
   $('#logOut').addEventListener('click', (e) => { const r = e.target.closest('.log-row'); if (r) { stopPlayback(); setStep(Number(r.dataset.i)); } });
 }
 
@@ -1521,7 +1586,8 @@ async function init() {
   // a friendlier starting point than the engine defaults: 1 KiB, 16 B, 4-way
   state.config.associativity = 4;
   $('#footVersion').textContent = 'CACHE-SIM v' + state.meta.version;
-  $$('.deck .module').forEach((m, i) => m.style.setProperty('--i', i));
+  $$('.stage .module').forEach((m, i) => m.style.setProperty('--i', i));
+  initSetupDrawer();
   buildConfigControls();
   syncConfigUI();
   buildGenerator();
