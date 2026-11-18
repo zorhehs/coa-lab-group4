@@ -957,7 +957,7 @@ function renderLog() {
     logBuiltFor = state.sim;
     const rows = evs.map((e, i) => {
       const mt = e.miss_type ? `<small>${e.miss_type.slice(0, 4).toUpperCase()}</small>` : (e.result === 'VICTIM' ? '<small>VC</small>' : '');
-      return `<div class="log-row" data-i="${i + 1}"><span>${i + 1}</span><span class="op ${e.op}">${e.op}</span><span>${e.fields.hex}</span><span>${e.set_index}</span><span>${e.way === null ? '—' : e.way}</span><span class="r ${e.result}">${e.result === 'VICTIM' ? 'VICT' : e.result}${mt}</span></div>`;
+      return `<div class="log-row" data-i="${i + 1}"><span>${i + 1}</span><span class="op ${e.op}">${e.op}</span><span>${e.fields.hex}</span><span>${e.set_index}</span><span>${e.way === null ? '—' : e.way}</span><span class="r ${e.result}"><em>${e.result === 'VICTIM' ? 'VICT' : e.result}</em>${mt}</span></div>`;
     });
     if (state.sim.truncated) rows.push(`<div class="log-more">… ${state.traceCount - evs.length} more accesses (step to END for totals)</div>`);
     out.innerHTML = rows.join('');
