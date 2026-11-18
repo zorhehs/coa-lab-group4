@@ -63,7 +63,7 @@ let themeCache = null;
 function theme() {
   if (!themeCache) {
     const v = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-    themeCache = { accent: v('--accent'), green: v('--green'), red: v('--red'), blue: v('--blue'), violet: v('--violet'),
+    themeCache = { accent: v('--accent'), teal: v('--teal'), green: v('--green'), red: v('--red'), blue: v('--blue'), violet: v('--violet'),
       accentRgb: v('--accent-rgb'), greenRgb: v('--green-rgb'), tintRgb: v('--tint-rgb'), veil: v('--veil'), lcd: v('--lcd'), text: v('--text'), muted: v('--muted'), dim: v('--dim'), hair: v('--hair-2') };
   }
   return themeCache;
@@ -631,7 +631,7 @@ function renderBus(e, pulse) {
   };
   set('#ledMemR', !!(e && e.mem_read), 'blue');
   set('#ledMemW', !!(e && e.mem_write), 'violet');
-  set('#ledWb', !!(e && e.writeback), 'accent');
+  set('#ledWb', !!(e && e.writeback), 'teal');
   set('#ledVc', !!(e && e.result === 'VICTIM'), 'blue');
   let note = 'memory bus idle';
   if (e) {
@@ -892,8 +892,8 @@ function renderArray() {
 const COUNTER_GROUPS = [
   ['ACCESSES', [['accesses', 'TOTAL', ''], ['reads', 'READS', 'blue'], ['writes', 'WRITES', 'violet'],
                 ['hits', 'HITS', 'green'], ['misses', 'MISSES', 'red'], ['read_misses', 'READ MISSES', ''], ['write_misses', 'WRITE MISSES', '']]],
-  ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'accent'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
-  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'accent'],
+  ['MISSES BY TYPE', [['compulsory', 'COMPULSORY', 'teal'], ['capacity', 'CAPACITY', 'violet'], ['conflict', 'CONFLICT', 'red'], ['victim_hits', 'VICTIM HITS', 'blue']]],
+  ['MEMORY', [['mem_reads', 'READS', ''], ['mem_writes', 'WRITES', ''], ['writebacks', 'WRITE-BACKS', 'teal'],
               ['dirty_lines', 'DIRTY LINES', '']]],
 ];
 function renderCounters() {
@@ -1121,7 +1121,7 @@ const METRIC_LABELS = {
   traffic_kib: 'TRAFFIC', writebacks: 'WRITE-BACKS', mem_reads: 'MEM READS', mem_writes: 'MEM WRITES',
   traffic_flushed_kib: 'TRAFFIC + FLUSH',
 };
-const seriesColors = () => [theme().accent, theme().green, theme().blue, theme().red, theme().violet, '#E29A8E', '#78C8B6'];
+const seriesColors = () => [theme().accent, theme().teal, theme().blue, theme().violet, theme().green, theme().red, theme().muted];
 
 function buildExperimentControls() {
   const mk = (el, items, cur, onpick) => {
@@ -1169,7 +1169,7 @@ function renderSweep() {
     stacked = true; fmt = (v) => String(Math.round(v));
     const useSeries = seriesNames.length > 1 ? seriesNames[0] : '';
     series = ['compulsory', 'capacity', 'conflict'].map((k, i) => ({
-      name: k.toUpperCase(), color: [theme().accent, theme().violet, theme().red][i],
+      name: k.toUpperCase(), color: [theme().teal, theme().violet, theme().red][i],
       values: cats.map((c) => { const r = sw.rows.find((x) => x.label === c && (x.series || '') === useSeries); return r && r.stats ? r.stats[k] : null; }),
     }));
     ylabel = 'MISSES' + (useSeries ? ' · ' + useSeries : '');
